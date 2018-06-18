@@ -48,7 +48,7 @@ def run(om,options,i):
                 traindata = list(utils.read_conll(cur_treebank.trainfile, cur_treebank.iso_id,options.max_sentences))
 
             parser.Train(traindata)
-            print 'Finished epoch %d in %.1f seconds' %(epoch, time.time() - start_time)
+            print 'Finished epoch ' + str(epoch)
 
             model_file = os.path.join(outdir, options.model + str(epoch))
             parser.Save(model_file)
@@ -84,14 +84,18 @@ def run(om,options,i):
                                 if score > cur_treebank.dev_best[1]:
                                     cur_treebank.dev_best = [epoch,score]
 
-            if om.deadline:
+            if options.deadline:
                 # keep track of duration of training+eval
-                duration = time.time() - start_time
+                now = time.time()
+                duration = now - start_time
                 durations.append(duration)
-                # estimate when next epoch would finish
-                eta = time.time() + max(durations[-5:])
+                # estimate when next epoch will finish
+                last_five_durations = durations[-5:]
+                eta = time.time() + max(last_five_durations)
+                print 'Deadline in %.1f seconds' %(options.deadline-now)
+                print 'ETA of next epoch in %.1f seconds' %(eta-now)
                 # does it exceed the deadline?
-                exceeds_deadline = eta > om.deadline
+                exceeds_deadline = eta > options.deadline
             else:
                 # no deadline
                 exceeds_deadline = False
@@ -110,7 +114,8 @@ def run(om,options,i):
                 print "Copying " + bestmodel_file + " to " + model_file
                 copyfile(bestmodel_file,model_file)
 
-            if exceeds_deadline:
+            if exceeds_deadline and epoch < options.epochs:
+                print 'Leaving epoch loop early to avoid exceeding deadline'
                 break
 
     else: #if predict - so
