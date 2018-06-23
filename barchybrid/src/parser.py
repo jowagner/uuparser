@@ -103,7 +103,9 @@ def run(om,options,i):
             if exceeds_deadline or epoch == options.epochs:
                 # at the last epoch copy the best model to barchybrid.model
                 if not options.model_selection:
-                    best_epoch = options.epochs # take the final epoch if model selection off completely (for example multilingual case)
+                    # model selection off completely (for example multilingual case)
+                    # --> take the final epoch, i.e. the current epoch
+                    best_epoch = epoch
                 else:
                     best_epoch = cur_treebank.dev_best[0] # will be final epoch by default if model selection not on for this treebank
                     if cur_treebank.model_selection:
