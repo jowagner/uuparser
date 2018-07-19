@@ -220,6 +220,7 @@ def read_conll(filename, language=None, maxSize=-1, hard_lim=False, vocab_prep=F
         maxSize = -1 # when preparing the vocab with a soft limit we need to use the whole corpus
     ts = time.time()
     dropped = 0
+    unable_to_find_parent = 0
     read = 0
     root = ConllEntry(0, '*root*', '*root*', 'ROOT-POS', 'ROOT-CPOS', '_', -1, 'rroot', '_', '_')
     root.language_id = language
@@ -230,6 +231,7 @@ def read_conll(filename, language=None, maxSize=-1, hard_lim=False, vocab_prep=F
     for line in fh:
         tok = line.strip().split('\t')
         if not tok or line.strip() == '':
+            # empty line --> complete sentence in list `tokens`
             if len(tokens)>1:
                 conll_tokens = [t for t in tokens if isinstance(t,ConllEntry)]
                 if not drop_nproj or isProj(conll_tokens): # keep going if it's projective or we're not dropping non-projective sents
@@ -241,7 +243,10 @@ def read_conll(filename, language=None, maxSize=-1, hard_lim=False, vocab_prep=F
                     for tok in conll_tokens:
                         tok.rdeps = [i.id for i in conll_tokens if i.parent_id == tok.id]
                         if tok.id != 0:
-                            tok.parent_entry = [i for i in conll_tokens if i.id == tok.parent_id][0]
+                            try:
+                                tok.parent_entry = [i for i in conll_tokens if i.id == tok.parent_id][0]
+                            except IndexError:
+                                unable_to_find_parent += 1
                     if maxSize > 0:
                         if not hard_lim:
                             all_tokens.append(tokens)
@@ -254,9 +259,12 @@ def read_conll(filename, language=None, maxSize=-1, hard_lim=False, vocab_prep=F
                     else:
                         yield tokens
                 else:
-                    #print 'Non-projective sentence dropped'
+                    # drop_nproj and not isProj()
                     dropped += 1
                 read += 1
+            else:
+                # dropping sentence with no tokens and comments, i.e. two empty lines
+                print 'Warning: Found sentence with no tokens and comments, i.e. two empty lines. File not in .conllu format.'
             tokens = [root]
         else:
             if line[0] == '#' or '-' in tok[0] or '.' in tok[0]:
@@ -265,13 +273,14 @@ def read_conll(filename, language=None, maxSize=-1, hard_lim=False, vocab_prep=F
                 token = ConllEntry(int(tok[0]), tok[1], tok[2], tok[4], tok[3], tok[5], int(tok[6]) if tok[6] != '_' else -1, tok[7], tok[8], tok[9])
                 token.language_id = language
                 tokens.append(token)
+    if dropped:
+        print 'Warning: dropped %d sentence(s)' %dropped
+    if unable_to_find_parent:
+        print 'Warning (not relevant in predict mode): was not able to find parent %d time(s)' %unable_to_find_parent
     if hard_lim and yield_count < maxSize:
         print 'Warning: unable to yield ' + str(maxSize) + ' sentences, only ' + str(yield_count) + ' found'
-
-# TODO: deal with case where there are still unyielded tokens
-# e.g. when there is no newline at end of file
-#    if len(tokens) > 1:
-#        yield tokens
+    if len(tokens) > 1:
+        print 'Warning: found tokens that are not followed by a sentence-ending empty line; ignoring trailing data'
 
     print read, 'sentences read'
 
@@ -331,10 +340,14 @@ def normalize(word):
 def evaluate(gold,test,conllu):
     scoresfile = test + '.txt'
     print "Writing to " + scoresfile
+    print 'gold: ' +gold
+    print 'test: ' +test
     if not conllu:
+        print 'Using src/utils/eval.pl for evaluation'
         #os.system('perl src/utils/eval.pl -g ' + gold + ' -s ' + test  + ' > ' + scoresfile + ' &')
         os.system('perl src/utils/eval.pl -g ' + gold + ' -s ' + test  + ' > ' + scoresfile )
     else:
+        print 'Using src/utils/evaluation_script/conll17_ud_eval.py for evaluation'
         os.system('python src/utils/evaluation_script/conll17_ud_eval.py -v -w src/utils/evaluation_script/weights.clas ' + gold + ' ' + test + ' > ' + scoresfile)
     score = get_LAS_score(scoresfile,conllu)
     return score
