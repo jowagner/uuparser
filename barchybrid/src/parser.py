@@ -36,9 +36,11 @@ def run(om,options,i):
         parser = ArcHybridLSTM(words, pos, rels, cpos, langs, w2i,
                                ch, options)
 
+        durations = []
         for epoch in xrange(options.first_epoch, options.first_epoch+options.epochs):
 
             print 'Starting epoch ' + str(epoch)
+            start_time = time.time()
 
             if options.multiling:
                 traindata = list(utils.read_conll_dir(om.languages, "train", options.max_sentences))
@@ -82,9 +84,28 @@ def run(om,options,i):
                                 if score > cur_treebank.dev_best[1]:
                                     cur_treebank.dev_best = [epoch,score]
 
-            if epoch == options.epochs: # at the last epoch choose which model to copy to barchybrid.model
+            if options.deadline:
+                # keep track of duration of training+eval
+                now = time.time()
+                duration = now - start_time
+                durations.append(duration)
+                # estimate when next epoch will finish
+                last_five_durations = durations[-5:]
+                eta = time.time() + max(last_five_durations)
+                print 'Deadline in %.1f seconds' %(options.deadline-now)
+                print 'ETA of next epoch in %.1f seconds' %(eta-now)
+                # does it exceed the deadline?
+                exceeds_deadline = eta > options.deadline
+            else:
+                # no deadline
+                exceeds_deadline = False
+ 
+            if exceeds_deadline or epoch == options.epochs:
+                # at the last epoch copy the best model to barchybrid.model
                 if not options.model_selection:
-                    best_epoch = options.epochs # take the final epoch if model selection off completely (for example multilingual case)
+                    # model selection off completely (for example multilingual case)
+                    # --> take the final epoch, i.e. the current epoch
+                    best_epoch = epoch
                 else:
                     best_epoch = cur_treebank.dev_best[0] # will be final epoch by default if model selection not on for this treebank
                     if cur_treebank.model_selection:
@@ -94,6 +115,10 @@ def run(om,options,i):
                 model_file = os.path.join(outdir,"barchybrid.model")
                 print "Copying " + bestmodel_file + " to " + model_file
                 copyfile(bestmodel_file,model_file)
+
+            if exceeds_deadline and epoch < options.epochs:
+                print 'Leaving epoch loop early to avoid exceeding deadline'
+                break
 
     else: #if predict - so
 
@@ -171,6 +196,9 @@ task mode) rather than scanning datadir.')
     group.add_option("--testfile", metavar="FILE", help="Annotated CONLL(U) test file")
     group.add_option("--epochs", type="int", metavar="INTEGER", default=30,
         help='Number of epochs')
+    group.add_option("--deadline", type="float", metavar="FLOAT", default=0.0,
+        help='Do not start another epoch if ETA is after the provided deadline \
+(seconds after the system epoch, usually 1st of Jan 1970; default = no deadline)')
     group.add_option("--predict", help='Parse', action="store_true", default=False)
     group.add_option("--multiling", action="store_true", default=False,
         help='Train a multilingual parser with language embeddings')
