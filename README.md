@@ -1,3 +1,10 @@
+This fork adds some minor functionality so far:
+* scanning of treebank folder instead of requiring a .json file
+* do not complain at predict time if input is not annotated with heads and arc labels
+* option to stop training early to meet a deadline
+
+More features are beeing developed in a private repository and may be published here later.
+
 # UUParser
 ## Transition based dependency parser for Universal Dependencies using BiLSTM feature extractors.
 This parser is based on [Eli Kiperwasser's transition-based parser](http://github.com/elikip/bist-parser).
