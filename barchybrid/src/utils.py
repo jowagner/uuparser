@@ -329,9 +329,10 @@ def parse_list_arg(l):
     is a string"""
     if os.path.isfile(l):
         f = codecs.open(l, 'r', encoding='utf-8')
-        return [line.strip("\n").split()[0] for line in f]
+        return [line.split()[0] for line in f]
     else:
-        return [el for el in l.split(" ")]
+        l = l.replace(':', ' ')
+        return l.split()
 
 numberRegex = re.compile("[0-9]+|[0-9]+\\.[0-9]+|[0-9]+[0-9,]+");
 def normalize(word):
