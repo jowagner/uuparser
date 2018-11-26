@@ -1,23 +1,17 @@
 from collections import Counter
 import re
-import os,time
+import os, time
 from itertools import chain
 from operator import itemgetter
 import random
 import codecs
 
-# default random seeds for parser. hard-coded here to enable sharing between other modules
-#dynet_seed = 123456789
-python_seed = 1
 
 class ConllEntry:
     def __init__(self, id, form, lemma, pos, cpos, feats=None, parent_id=None, relation=None, deps=None, misc=None):
         self.id = id
         self.form = form
         self.norm = normalize(form)
-        #why was the uppercasing necessary?
-        #self.cpos = cpos.upper()
-        #self.pos = pos.upper()
         self.cpos = cpos
         self.pos = pos
         self.parent_id = parent_id
@@ -37,18 +31,26 @@ class ConllEntry:
         self.pred_cpos = None
 
 
+    def clone(self):
+        return ConllEntry(
+            self.id, self.form, self.lemma, self.pos, self.cpos,
+            self.feats, self.parent_id, self.relation, self.deps,
+            self.misc
+        )
+
     def __str__(self):
         values = [str(self.id), self.form, self.lemma, \
-                  self.pred_cpos if self.pred_cpos else self.cpos,\
                   self.pred_pos if self.pred_pos else self.pos,\
+                  self.pred_cpos if self.pred_cpos else self.cpos,\
                   self.feats, str(self.pred_parent_id) if self.pred_parent_id \
                   is not None else str(self.parent_id), self.pred_relation if\
                   self.pred_relation is not None else self.relation, \
                   self.deps, self.misc]
         return '\t'.join(['_' if v is None else v for v in values])
 
+
 class Treebank(object):
-    def __init__(self,trainfile,devfile,testfile):
+    def __init__(self, trainfile, devfile, testfile):
         self.name = 'noname'
         self.trainfile = trainfile
         self.devfile = devfile
@@ -57,8 +59,9 @@ class Treebank(object):
         self.testfile = testfile
         self.outfilename = None
 
+
 class UDtreebank(Treebank):
-    def __init__(self,treebank_info,location, shared_task=False, shared_task_data_dir=None):
+    def __init__(self, treebank_info, location, shared_task=False, shared_task_data_dir=None):
         """
         Read treebank info to a treebank object
         The treebank_info element contains different information if in
@@ -71,7 +74,7 @@ class UDtreebank(Treebank):
             if treebank_info['tcode'] == '0':
                 self.iso_id = treebank_info['lcode']
             else:
-                self.iso_id =treebank_info['lcode'] + '_' + treebank_info['tcode']
+                self.iso_id = treebank_info['lcode'] + '_' + treebank_info['tcode']
             #self.testfile = location + self.iso_id + '.conllu'
             #setting where I have Yan's output as input
             self.testfile = location + self.iso_id + '.txt'
@@ -85,11 +88,11 @@ class UDtreebank(Treebank):
             files_prefix = location + "/" + self.name + "/" + self.iso_id
             self.trainfile = files_prefix + "-ud-train.conllu"
             self.devfile = files_prefix + "-ud-dev.conllu"
-            #TODO: change if using data that has the test sets
             self.testfile = files_prefix + "-ud-dev.conllu"
             self.test_gold= files_prefix + "-ud-dev.conllu"
             self.dev_gold= files_prefix + "-ud-dev.conllu"
             self.outfilename = self.iso_id + '.conllu'
+
 
 class ParseForest:
     def __init__(self, sentence):
@@ -146,7 +149,7 @@ def vocab(conll_path, path_is_dir=False):
     langCounter = Counter()
 
     if path_is_dir:
-        data = read_conll_dir(conll_path,"train")
+        data = read_conll_dir(conll_path, "train")
     else:
         data = read_conll(conll_path, vocab_prep=True)
 
@@ -155,14 +158,21 @@ def vocab(conll_path, path_is_dir=False):
         for node in sentence:
             if isinstance(node, ConllEntry) and not node.form == u"*root*":
                 charsCount.update(node.form)
-        #TODO: aren't counters an overkill if we then just use the keys?
+
         posCount.update([node.pos for node in sentence if isinstance(node, ConllEntry)])
         cposCount.update([node.cpos for node in sentence if isinstance(node, ConllEntry)])
         relCount.update([node.relation for node in sentence if isinstance(node, ConllEntry)])
-        #TODO:this is hacky to do that at every word - should do it at every new lang
+
         if path_is_dir:
             langCounter.update([node.language_id for node in sentence if
                                 isinstance(node, ConllEntry)])
+    print "=== Vocab Statistics: ==="
+    print "Vocab containing %d words" % len(wordsCount)
+    print "Charset containing %d chars" % len(charsCount)
+    print "UPOS containing %d tags" % len(posCount)
+    print "CPOS containing %d tags" % len(cposCount)
+    print "Rels containing %d tags" % len(relCount)
+    print "Langs containing %d langs" % len(langCounter)
 
     return (wordsCount, {w: i for i, w in enumerate(wordsCount.keys())},
             posCount.keys(), cposCount.keys(), relCount.keys(),
@@ -177,6 +187,7 @@ def conll_dir_to_list(
 ):
     import json
     if not treebanks_from_json:
+        print "Scanning for available treebanks in", data_dir
         treebank_metadata = []
         for entry in os.listdir(data_dir):
             candidate_dir = os.path.join(data_dir, entry)
@@ -185,16 +196,19 @@ def conll_dir_to_list(
                     fields = filename.split('-ud-')
                     if len(fields) == 2 and fields[1] == 'train.conllu':
                         treebank_metadata.append((
-                            entry.decode('utf-8'),
-                            fields[0].decode('utf-8')
+                            entry.decode('utf-8'), # tbname
+                            fields[0].decode('utf-8') # tbid
                         ))
+
     elif shared_task:
+        print "Reading available treebanks from shared task metadata"
         metadataFile = shared_task_data_dir +'/metadata.json'
-        metadata = codecs.open(metadataFile, 'r',encoding='utf-8')
+        metadata = codecs.open(metadataFile, 'r', encoding='utf-8')
         json_str = metadata.read()
         treebank_metadata = json.loads(json_str)
     else:
-        ud_iso_file = codecs.open('./src/utils/ud_iso.json',encoding='utf-8')
+        print "Reading available treebanks from hard-coded json file"
+        ud_iso_file = codecs.open('./src/utils/ud_iso.json', encoding='utf-8')
         json_str = ud_iso_file.read()
         iso_dict = json.loads(json_str)
         treebank_metadata = iso_dict.items()
@@ -202,20 +216,32 @@ def conll_dir_to_list(
             for treebank_info in treebank_metadata ]
     return ud_treebanks
 
-def read_conll_dir(languages,filetype,maxSize=-1):
+
+def read_conll_dir(languages, filetype, maxSize=-1):
     #print "Max size for each corpus: ", maxSize
     if filetype == "train":
-        return chain(*(read_conll(lang.trainfile,lang.name,maxSize) for lang in languages))
+        return chain(*(read_conll(lang.trainfile, lang.name, maxSize) for lang in languages))
     elif filetype == "dev":
-        return chain(*(read_conll(lang.devfile,lang.name) for lang in languages if lang.pred_dev))
+        return chain(*(read_conll(lang.devfile, lang.name) for lang in languages if lang.pred_dev))
     elif filetype == "test":
-        return chain(*(read_conll(lang.testfile,lang.name) for lang in languages))
+        return chain(*(read_conll(lang.testfile, lang.name) for lang in languages))
+
 
 def read_conll(filename, language=None, maxSize=-1, hard_lim=False, vocab_prep=False, drop_nproj=False):
     # hard lim means capping the corpus size across the whole training procedure
     # soft lim means using a sample of the whole corpus at each epoch
-    fh = codecs.open(filename,'r',encoding='utf-8')
+    fh = codecs.open(filename, 'r', encoding='utf-8')
     print "Reading " + filename
+    has_tbweights = False
+    if filename.endswith('.conllu'):
+        tbweights_filename = filename[:-7] + '.tbweights'
+        # Ideally, we should test whether om.tbweights_from_file is set
+        # but it would require lots of changes to get it here.
+        if os.path.exists(tbweights_filename):
+            tbweights_f = open(tbweights_filename, 'rb')
+            has_tbweights = True
+            print "Also reading " + tbweights_filename
+
     if vocab_prep and not hard_lim:
         maxSize = -1 # when preparing the vocab with a soft limit we need to use the whole corpus
     ts = time.time()
@@ -225,6 +251,7 @@ def read_conll(filename, language=None, maxSize=-1, hard_lim=False, vocab_prep=F
     root = ConllEntry(0, '*root*', '*root*', 'ROOT-POS', 'ROOT-CPOS', '_', -1, 'rroot', '_', '_')
     root.language_id = language
     tokens = [root]
+    tb_index = 0
     yield_count = 0
     if maxSize > 0 and not hard_lim:
         all_tokens = []
@@ -232,13 +259,20 @@ def read_conll(filename, language=None, maxSize=-1, hard_lim=False, vocab_prep=F
         tok = line.strip().split('\t')
         if not tok or line.strip() == '':
             # empty line --> complete sentence in list `tokens`
-            if len(tokens)>1:
-                conll_tokens = [t for t in tokens if isinstance(t,ConllEntry)]
+            if len(tokens) > 1:
+                new_root = root.clone()
+                new_root.language_id = root.language_id
+                new_root.tb_index = tb_index
+                if has_tbweights:
+                    new_root.tb_weights = tbweights_f.readline().rstrip()
+                    if not new_root.tb_weights:
+                        raise ValueError, 'not enough lines in %r' %tbweights_filename
+                conll_tokens = [t for t in tokens if isinstance(t, ConllEntry)]
                 if not drop_nproj or isProj(conll_tokens): # keep going if it's projective or we're not dropping non-projective sents
                 #dropping the proj for exploring swap
                 #if not isProj([t for t in tokens if isinstance(t, ConllEntry)]):
                     inorder_tokens = inorder(conll_tokens)
-                    for i,t in enumerate(inorder_tokens):
+                    for i, t in enumerate(inorder_tokens):
                         t.projective_order = i
                     for tok in conll_tokens:
                         tok.rdeps = [i.id for i in conll_tokens if i.parent_id == tok.id]
@@ -270,9 +304,24 @@ def read_conll(filename, language=None, maxSize=-1, hard_lim=False, vocab_prep=F
             if line[0] == '#' or '-' in tok[0] or '.' in tok[0]:
                 tokens.append(line.strip())
             else:
-                token = ConllEntry(int(tok[0]), tok[1], tok[2], tok[4], tok[3], tok[5], int(tok[6]) if tok[6] != '_' else -1, tok[7], tok[8], tok[9])
+                token = ConllEntry(int(tok[0]), tok[1], tok[2], tok[3], tok[4], tok[5], int(tok[6]) if tok[6] != '_' else -1, tok[7], tok[8], tok[9])
                 token.language_id = language
                 tokens.append(token)
+    if len(tokens) > 1:
+        new_root = root.clone()
+        new_root.language_id = root.language_id
+        new_root.tb_index = tb_index
+        if has_tbweights:
+            new_root.tb_weights = tbweights_f.readline().rstrip()
+            if not new_root.tb_weights:
+                raise ValueError, 'not enough lines in %r' %tbweights_filename
+        tokens[0] = new_root
+        yield tokens
+    if has_tbweights:
+        line = tbweights_f.readline()
+        if line:
+            raise ValueError, 'too many lines in %r' %tbweights_filename
+        tbweights_f.close()
     if dropped:
         print 'Warning: dropped %d sentence(s)' %dropped
     if unable_to_find_parent:
@@ -294,6 +343,7 @@ def read_conll(filename, language=None, maxSize=-1, hard_lim=False, vocab_prep=F
     te = time.time()
     print 'Time: %.2gs'%(te-ts)
 
+
 def write_conll(fn, conll_gen):
     print "Writing to " + fn
     sents = 0
@@ -306,18 +356,19 @@ def write_conll(fn, conll_gen):
             fh.write('\n')
         print "Wrote " + str(sents) + " sentences"
 
+
 def write_conll_multiling(conll_gen, languages):
     lang_dict = {language.name:language for language in languages}
     cur_lang = conll_gen[0][0].language_id
     outfile = lang_dict[cur_lang].outfilename
-    fh = codecs.open(outfile,'w',encoding='utf-8')
+    fh = codecs.open(outfile, 'w', encoding='utf-8')
     print "Writing to " + outfile
     for sentence in conll_gen:
         if cur_lang != sentence[0].language_id:
             fh.close()
             cur_lang = sentence[0].language_id
             outfile = lang_dict[cur_lang].outfilename
-            fh = codecs.open(outfile,'w',encoding='utf-8')
+            fh = codecs.open(outfile, 'w', encoding='utf-8')
             print "Writing to " + outfile
         for entry in sentence[1:]:
             fh.write(unicode(entry) + '\n')
@@ -331,12 +382,32 @@ def parse_list_arg(l):
         f = codecs.open(l, 'r', encoding='utf-8')
         return [line.split()[0] for line in f]
     else:
+        # also support colon as a separator
         l = l.replace(':', ' ')
         return l.split()
 
+
 numberRegex = re.compile("[0-9]+|[0-9]+\\.[0-9]+|[0-9]+[0-9,]+");
+
+
 def normalize(word):
     return 'NUM' if numberRegex.match(word) else word.lower()
+
+
+def strong_normalize(word):
+    if numberRegex.match(word):
+        return 'NUM'
+    else:
+        word = word.lower()
+        word = re.sub(r".+@.+", "*EMAIL*", word)
+        word = re.sub(r"@\w+", "*AT*", word)
+        word = re.sub(r"(https?://|www\.).*", "*url*", word)
+        word = re.sub(r"([^\d])\1{2,}", r"\1\1", word)
+        word = re.sub(r"([^\d][^\d])\1{2,}", r"\1\1", word)
+        word = re.sub(r"``", '"', word)
+        word = re.sub(r"''", '"', word)
+        word = re.sub(r"\d", "0", word)
+
 
 def evaluate(gold,test,conllu):
     scoresfile = test + '.txt'
@@ -353,45 +424,47 @@ def evaluate(gold,test,conllu):
     score = get_LAS_score(scoresfile,conllu)
     return score
 
+
+def set_seeds(options):
+    # note that dynet sets it seed at module loading time
+    if options.dynet_seed:
+        if  options.use_default_seed:
+            print 'Using 1 as the Python seed (and we see that a DyNet seed was specified)'
+            random.seed(1)
+        else:
+            print 'Setting Python seed to match DyNet seed'
+            random.seed(options.dynet_seed)
+    else:
+        if  options.use_default_seed:
+            print 'Using 1 as the Python seed (and there is no information on a DyNet seed)'
+            random.seed(1)
+        else:
+            print 'Not setting Python seed (and there is no information on a DyNet seed)'
+
+
 def inorder(sentence):
     queue = [sentence[0]]
-    def inorder_helper(sentence,i):
+    def inorder_helper(sentence, i):
         results = []
         left_children = [entry for entry in sentence[:i] if entry.parent_id == i]
         for child in left_children:
-            results += inorder_helper(sentence,child.id)
+            results += inorder_helper(sentence, child.id)
         results.append(sentence[i])
 
         right_children = [entry for entry in sentence[i:] if entry.parent_id == i ]
         for child in right_children:
-            results += inorder_helper(sentence,child.id)
+            results += inorder_helper(sentence, child.id)
         return results
-    return inorder_helper(sentence,queue[0].id)
+    return inorder_helper(sentence, queue[0].id)
+
 
 def set_python_seed(seed):
     random.seed(seed)
 
+
 def generate_seed():
     return random.randint(0,10**9) # this range seems to work for Dynet and Python's random function
 
-def set_seeds(options):
-    global dynet_seed
-    global python_seed
-    if not options.predict: # seeds shouldn't make any different when predicting so can always use defaults
-        # the order of everything here is crucial
-        if options.use_default_seed: # user requests default seeds
-            print "Using default Python seed"
-            set_python_seed(python_seed)
-#        else:
-#            if options.parser_seed: # user specifies a parser seed
-#                python_seed = options.parser_seed
-#                print "Set parser seed to: " + str(python_seed)
-#            else: # user says nothing about seeds - need to generate everything
-#                python_seed = generate_seed()
-#                print "Generated parser seed: " + str(python_seed)
-#            set_python_seed(python_seed)
-#            dynet_seed = generate_seed()
-#            print "Generated Dynet seed: " + str(dynet_seed)
 
 def get_LAS_score(filename, conllu=True):
     score = None
@@ -404,5 +477,4 @@ def get_LAS_score(filename, conllu=True):
         else:
             las_line = [line for line in fh][0]
             score = float(las_line.split('=')[1].split()[0])
-
     return score

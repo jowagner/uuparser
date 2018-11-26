@@ -1,10 +1,11 @@
-import os,sys
+import os, sys
 import utils
 import copy
 import random
 
 #TODO: this whole file is now quite hacky - used to be mostly useful for
 #pseudoProj
+
 class OptionsManager(object):
 
     def __init__(self,options):
@@ -32,6 +33,21 @@ class OptionsManager(object):
         elif not os.path.exists(options.outdir): # create output directory if it doesn't exist
             print "Creating output directory " + options.outdir
             os.mkdir(options.outdir)
+        if options.elmo_output_dir and not os.path.exists(options.elmo_output_dir):
+            print "Creating elmo output directory " + options.elmo_output_dir
+        if options.weighted_tb:
+            # TODO: Why is --weighted-tbemb required? It seems to be redundant.
+            if not (options.tb_weights or options.tb_weights_from_file):
+                raise Exception("If using weighted tbemb you must specify the weights using --tb-weights or --tb-weights-from-file")
+            self.weighted_tb = options.weighted_tb
+            self.tb_weights = options.tb_weights
+            self.tb_weights_from_file = options.tb_weights_from_file
+        else:
+            if options.tb_weights or options.tb_weights_from_file:
+                raise Exception("To use weighted tbemb you must specify --weighted-tbemb as well.")
+            self.weighted_tb = None
+            self.tb_weights = None
+            self.tb_weights_from_file = False
 
         if not options.predict and not (options.rlFlag or options.rlMostFlag or options.headFlag):
             raise Exception("Must include either head, rl or rlmost (For example, if you specified --disable-head and --disable-rlmost, you must specify --userl)")
@@ -127,16 +143,17 @@ class OptionsManager(object):
 
                 if options.predict and options.multi_monoling:
                     language.modeldir= "%s/%s"%(options.modeldir,language.iso_id)
-                    model = "%s/%s"%(language.modeldir,options.model)
-                    if not os.path.exists(model): # in multilingual case need model to be found in first language specified
+                    candidate_model   = os.path.join(language.modeldir, options.model)
+                    if not os.path.exists(candidate_model): # in multilingual case need model to be found in first language specified
                         if not options.shared_task:
                             raise Exception("Model not found. Path tried: %s"%model)
                         else:
                             #find model for the language in question
                             for otherl in ud_treebanks:
                                 if otherl.lcode == language.lcode:
-                                    if otherl.lcode == otherl.iso_id:
-                                        language.modeldir = "%s/%s"%(options.modeldir,otherl.iso_id)
+                                    # TODO: Why is the existence of the model file not tested here as well?
+                                    language.modeldir = os.path.join(options.modeldir, otherl.iso_id)
+                                    break
 
     # creates dev data by siphoning off a portion of the training data (when necessary)
     # sets up treebank for prediction and model selection on dev data

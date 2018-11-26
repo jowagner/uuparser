@@ -1,6 +1,7 @@
 from utils import ParseForest, read_conll, write_conll
 from multilayer_perceptron import MLP
 from feature_extractor import FeatureExtractor
+from options_manager import OptionsManager
 from operator import itemgetter
 from itertools import chain
 import utils, time, random
@@ -190,7 +191,7 @@ class ArcHybridLSTM:
         return costs,shift_case
 
 
-    def Predict(self, data):
+    def Predict(self, data, om, options):
         reached_max_swap = 0
         for iSentence, osentence in enumerate(data,1):
             sentence = deepcopy(osentence)
@@ -200,7 +201,7 @@ class ArcHybridLSTM:
             self.feature_extractor.Init()
             conll_sentence = [entry for entry in sentence if isinstance(entry, utils.ConllEntry)]
             conll_sentence = conll_sentence[1:] + [conll_sentence[0]]
-            self.feature_extractor.getWordEmbeddings(conll_sentence, False)
+            self.feature_extractor.getWordEmbeddings(conll_sentence, False, om)
             stack = ParseForest([])
             buf = ParseForest(conll_sentence)
 
@@ -234,7 +235,7 @@ class ArcHybridLSTM:
             yield osentence
 
 
-    def Train(self, trainData):
+    def Train(self, trainData, om, options):
         mloss = 0.0
         eloss = 0.0
         eerrors = 0
@@ -271,7 +272,7 @@ class ArcHybridLSTM:
 
             conll_sentence = [entry for entry in sentence if isinstance(entry, utils.ConllEntry)]
             conll_sentence = conll_sentence[1:] + [conll_sentence[0]]
-            self.feature_extractor.getWordEmbeddings(conll_sentence, True)
+            self.feature_extractor.getWordEmbeddings(conll_sentence, True, om)
             stack = ParseForest([])
             buf = ParseForest(conll_sentence)
             hoffset = 1 if self.headFlag else 0

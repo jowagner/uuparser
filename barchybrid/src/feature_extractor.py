@@ -1,6 +1,10 @@
 from bilstm import BiLSTM
+from options_manager import OptionsManager
 import dynet as dy
 import random
+import h5py # need to pip install this into environment
+import numpy as np
+import codecs
 
 class FeatureExtractor(object):
     def __init__(self,model,options,words,rels,langs,w2i,ch,nnvecs):
@@ -12,6 +16,7 @@ class FeatureExtractor(object):
         self.word_emb_size = options.word_emb_size
         self.char_emb_size = options.char_emb_size
         self.lang_emb_size = options.lang_emb_size
+        self.elmo_emb_size = options.elmo_emb_size
         self.wordsCount = words
         self.vocab = {word: ind+2 for word, ind in w2i.iteritems()} # +2 for MLP padding vector and OOV vector
         self.chars = {char: ind+1 for ind, char in enumerate(ch)} # +1 for OOV vector
@@ -25,11 +30,21 @@ class FeatureExtractor(object):
         self.external_embedding = None
         if options.external_embedding is not None:
             self.get_external_embeddings(options.external_embedding)
+            
+        self.use_elmo = options.use_elmo
+        if self.use_elmo:
+            self.elmo_layer = options.elmo_layer
+            if self.elmo_layer == "average":
+                print "using averaged ELMo representation"
 
-        lstm_input_size = self.word_emb_size + (self.edim if self.external_embedding is\
-                                                not None else 0) + (self.lang_emb_size if
-                                                                    self.multiling else 0) + 2 * self.char_lstm_output_size
+        lstm_input_size = ((self.word_emb_size) +
+                           (self.edim if self.external_embedding is not None else 0) +
+                           (self.elmo_emb_size if self.use_elmo else 0) +
+                           (self.lang_emb_size if self.multiling else 0) +
+                           (2 * self.char_lstm_output_size))
 
+        print "LSTM input size: ", lstm_input_size
+        
         if not self.disableBilstm:
             self.bilstm1 = BiLSTM(lstm_input_size, self.lstm_output_size, self.model,
                                   dropout_rate=0.33)
@@ -65,7 +80,8 @@ class FeatureExtractor(object):
                                                                                  paddingLangVec])) + self.word2lstmbias.expr() )
         self.empty = self.paddingVec if self.nnvecs == 1 else dy.concatenate([self.paddingVec for _ in xrange(self.nnvecs)])
 
-    def getWordEmbeddings(self, sentence, train):
+    def getWordEmbeddings(self, sentence, train, om):
+        root_count = 0
         for root in sentence:
             wordcount = float(self.wordsCount.get(root.norm, 0))
             noDropFlag =  not train or (random.random() < (wordcount/(0.25+wordcount)))
@@ -85,14 +101,33 @@ class FeatureExtractor(object):
                 root.evec = None
 
             if self.multiling:
-                root.langvec = self.langslookup[self.langs[root.language_id]] if self.lang_emb_size > 0 else None
+                # TODO: Why do we re-calculate langvec for every word?
+                # It usually changes only per document or per sentence.
+                # (We may want to set the weights for each token some day
+                # though.)
+                if om.weighted_tb and om.tb_weights:
+                    root.langvec = self.get_weighted_tbemb(entry, om)
+                elif om.weighted_tb and om.tb_weights_from_file:
+                    root.langvec = self.get_weighted_tbemb(entry, root_entry)
+                else:
+                    root.langvec = self.langslookup[self.langs[root.language_id]] if self.lang_emb_size > 0 else None
             else:
                 root.langvec = None
+                
+            if self.use_elmo:
+                if self.elmo_layer == "average":
+                    if cur_word_index < 0:
+                        root.elmo_vec = dy.zeros(1024)
+                    else:
+                        root.elmo_vec = elmo_embeddings[cur_word_index] # we only use the current word index on valid words and not on the placeholder root token.
+            else:
+                elmo_vec = None
+
 
             root.vec = dy.concatenate(filter(None, [root.wordvec,
                                                         root.evec,
                                                         root.chVec,
-                                                        root.langvec]))
+                                                        root.langvec])) #TODO: root.elmo_vec
         if not self.disableBilstm:
             self.bilstm1.set_token_vecs(sentence,train)
             self.bilstm2.set_token_vecs(sentence,train)
@@ -108,13 +143,9 @@ class FeatureExtractor(object):
 
 
     def get_external_embeddings(self,external_embedding_file):
-        external_embedding_fp = codecs.open(external_embedding_file,'r',encoding='utf-8')
+        external_embedding_fp = open(external_embedding_file, 'r') # removed utf-8
         external_embedding_fp.readline()
-        self.external_embedding = {}
-        for line in external_embedding_fp:
-            line = line.strip().split()
-            self.external_embedding[line[0]] = [float(f) for f in line[1:]]
-
+        self.external_embedding = {line.split(' ')[0] : [float(f) for f in line.strip().split(' ')[1:]] for line in external_embedding_fp}
         external_embedding_fp.close()
 
         self.edim = len(self.external_embedding.values()[0])
@@ -123,7 +154,94 @@ class FeatureExtractor(object):
         self.elookup = self.model.add_lookup_parameters((len(self.external_embedding) + 3, self.edim))
         for word, i in self.extrnd.iteritems():
             self.elookup.init_row(i, self.external_embedding[word])
-            self.extrnd['*PAD*'] = 1
-            self.extrnd['*INITIAL*'] = 2
+        self.extrnd['*PAD*'] = 1
+        self.extrnd['*INITIAL*'] = 2
 
         print 'Load external embedding. Vector dimensions', self.edim
+        
+        
+    def get_weighted_tbemb(self, entry, om):
+        """
+        Creates dictionaries with tbid as key and maps to the following values: 1) weights, 2) tbname and 3) tbkey.
+        4) Is a dictionary which combines the tbid key with the values from dictionaries (1-3).
+        The tb-emb is multiplied by the weights the user specifies for each tbid.
+        """
+
+        tbid2weights = {} # 1 mapping to weight specified on command line
+        tbid2tb = {}      # 2 mapping to tbname
+        tb2key = {}       # 3 mapping from tbname to index in langslookup
+        self.tbidmetadata = {}
+        tbidmetadata = self.tbidmetadata
+
+
+        # 1: Mapping from tbid to weight
+        for tb_weight in om.tb_weights.split():
+            tbid, weight = tb_weight.split(':')
+            if tbid not in tbid2weights:
+                tbid2weights[tbid] = weight
+            else:
+                raise ValueError, 'weight for %r specified more than once' %tbid
+        #print tbid2weights.items()
+
+        # 2: Mapping from tbid to treebank name
+        #    (completeness will be checked at start of step 4)
+        with open("../config/tbnames.tsv") as tsvfile:
+            reader = csv.reader(tsvfile, delimiter='\t')
+            for row in reader:
+                tb = row[0]
+                tbid = row[1]
+                if tbid in tbid2weights:
+                    tbid2tb[tbid] = tb
+        #print tbid2tb.items()
+
+        # 3: Mapping from treebank to lang number
+        for tb, id_number in self.langs.items():
+            tb = str(tb) # deal with mismatch of str and unicode types
+            if tb in str(tbid2tb):
+                tb2key[tb] = id_number
+        #print tb2key.items()
+
+        # 4: Append all of the above dictionary values based on tbid key
+        for tbid, weight in tbid2weights.items():
+            if tbid in tbid2tb:
+                tbidmetadata[tbid] = []
+            else:
+                raise ValueError, 'no tbname configured for tbid %r' %tbid
+
+        # 5: Calculate tb vector as weigthed average of base tb vectors
+        langvec = dy.zeros(self.lang_emb_size)
+        for tbid, v in tbidmetadata.items():
+            tbname = tbid2tb[tbid]
+            index  = tb2key[tbname]
+            weight = tbid2weights[tbid]
+            v.append(tbname)
+            v.append(weight)
+            v.append(index)
+            base_vector = self.langslookup[index]
+            contrib = float(weight) * base_vector
+            langvec = langvec + contrib
+        return langvec 
+
+
+    def compute_elmo_embeddings(self, data, options, data_type):
+        print data_type
+        tokenized_sents = []
+        elmo_sent_file = os.path.join(options.elmo_output_dir, '%s_concat_sentences.txt') % (data_type)
+        for sentence in data:
+            tokenized_sent = [entry.form for entry in sentence if isinstance(entry, utils.ConllEntry) and not entry.form == u"*root*"]
+            tokenized_sent = [word.encode('utf-8') for word in tokenized_sent]
+            tokenized_sents.append(tokenized_sent)
+
+        newline_sents = ('\n'.join(' '.join(map(str, sent)) for sent in tokenized_sents))
+        newline_sents = (newline_sents.decode('utf-8', errors='ignore'))
+        with codecs.open(elmo_sent_file, 'w', encoding='utf-8') as f:
+            f.write(unicode(newline_sents))
+
+        elmo_script = os.path.join(options.elmo_script_dir, 'gen_elmo.sh')
+        gen_elmo_command = os.path.join(elmo_script + ' %s/%s_concat_sentences.txt' + ' %s/%s_concat_sentences.hdf5' + ' --average' ) % (options.elmo_output_dir, data_type, options.elmo_output_dir, data_type)
+        print "generating elmo vectors: ", gen_elmo_command
+        os.system(gen_elmo_command)
+        vecs_file = os.path.join(options.elmo_output_dir, '%s_concat_sentences.hdf5') % (data_type)
+        h5py_file = h5py.File(vecs_file, 'r')
+        print "finished generating elmo representations."
+        return h5py_file

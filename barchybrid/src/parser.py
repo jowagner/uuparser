@@ -4,11 +4,81 @@ from options_manager import OptionsManager
 import pickle, utils, os, time, sys, copy, itertools, re, random
 from shutil import copyfile
 import codecs
+import csv
+import operator
+
+top_k_dict = {} # keep populating this dictionary if we have a higher dev score, if the number of entries exceeds 'k', overwrite the minimum k,v pair.
+
+def predict_and_eval_dev(parser, om, options, cur_treebank, epoch):
+
+    if options.multiling:
+        pred_langs = [lang for lang in om.languages if lang.pred_dev] # languages which have dev data on which to predict
+        for lang in pred_langs:
+            lang.outfilename = os.path.join(lang.outdir, 'dev_epoch_' + str(epoch) + '.conllu')
+            print "Predicting on dev data for " + lang.name
+        devdata = list(utils.read_conll_dir(pred_langs, "dev"))
+        if options.fingerprint and epoch == options.first_epoch:
+            parser.print_data_fingerprint(devdata, 'dev data')
+            # re-set devdata as it can only be iterated once
+            devdata = list(utils.read_conll_dir(pred_langs, "dev"))
+        pred = list(parser.Predict(devdata, om, options))
+        if len(pred) > 0:
+            utils.write_conll_multiling(pred, pred_langs)
+        else:
+            print "Warning: prediction empty"
+        if options.pred_eval:
+            for lang in pred_langs:
+                print "Evaluating dev prediction for " + lang.name
+                utils.evaluate(lang.dev_gold, lang.outfilename, om.conllu)
+    else: # monolingual case
+        if cur_treebank.pred_dev:
+            print "Predicting on dev data for " + cur_treebank.name
+            devdata = list(utils.read_conll(cur_treebank.devfile, cur_treebank.iso_id))
+            if options.fingerprint and epoch == options.first_epoch:
+                parser.print_data_fingerprint(devdata, 'dev data')
+            cur_treebank.outfilename = os.path.join(cur_treebank.outdir, 'dev_epoch_' + str(epoch) + ('.conll' if not om.conllu else '.conllu')) # outdir was a global variable
+            pred = list(parser.Predict(devdata, om, options))
+            utils.write_conll(cur_treebank.outfilename, pred)
+            if options.pred_eval:
+                print "Evaluating dev prediction for " + cur_treebank.name
+                score = utils.evaluate(cur_treebank.dev_gold, cur_treebank.outfilename, om.conllu)
+                if options.model_selection:
+                    if score > cur_treebank.dev_best[1]:
+                        cur_treebank.dev_best = [epoch, score]
+                        if options.top_k_epochs: #TODO try Python's heapq module
+                            top_k_dict[epoch] = score
+                            model_file = os.path.join(cur_treebank.outdir, options.model + str(epoch)) # write in the first few models, they will be overwritten later
+                            parser.Save(model_file)
+                            if len(top_k_dict) == options.top_k_epochs + 1: # + 1 because we're going to delete an entry so we are left with k after adding the new element.
+                                print 'Reached k model entries, clearing lowest entry'
+                                sorted_top_k = sorted(top_k_dict.items(), key=operator.itemgetter(1)) # sort by second element in tuple (LAS).
+                                min_entry = sorted_top_k[0]
+                                min_epoch, min_score = min_entry[0], min_entry[1]
+                                del top_k_dict[min_epoch]
+                                min_model_file = os.path.join(cur_treebank.outdir, options.model + str(min_epoch)) # remove the model we have just cleared from the dict.
+                                if os.path.exists(min_model_file):
+                                    os.remove(min_model_file)
+                    else: # we need to overwrite lower entries in the dictionary, e.g. in the case that dev is not higher than current best dev but is higher than lowest dict entry.
+                        if options.top_k_epochs:
+                            sorted_top_k = sorted(top_k_dict.items(), key=operator.itemgetter(1))
+                            min_entry = sorted_top_k[0]
+                            min_epoch, min_score = min_entry[0], min_entry[1]
+                            if score > min_score: # we can assume we already have a value for min_score as the if statement above will always be true for the first epoch.
+                                top_k_dict[epoch] = score # add new element to dictionary
+                                del top_k_dict[min_epoch]
+                                model_file = os.path.join(cur_treebank.outdir, options.model + str(epoch))
+                                parser.Save(model_file)
+                                min_model_file = os.path.join(cur_treebank.outdir, options.model + str(min_epoch))
+                                if os.path.exists(min_model_file):
+                                    os.remove(min_model_file)
+    sys.stdout.flush()
+
 
 def run(om,options,i):
 
     if options.multiling:
-        outdir = options.outdir
+        outdir = options.outdir # cur_treebank = None ?
+        cur_treebank = None
     else:
         cur_treebank = om.languages[i]
         outdir = cur_treebank.outdir
@@ -17,11 +87,9 @@ def run(om,options,i):
         outdir = options.shared_task_outdir
 
     if not options.predict: # training
-
         print 'Preparing vocab'
         if options.multiling:
             words, w2i, pos, cpos, rels, langs, ch = utils.vocab(om.languages, path_is_dir=True)
-
         else:
             words, w2i, pos, cpos, rels, langs, ch = utils.vocab(cur_treebank.trainfile)
 
@@ -47,42 +115,16 @@ def run(om,options,i):
             else:
                 traindata = list(utils.read_conll(cur_treebank.trainfile, cur_treebank.iso_id,options.max_sentences))
 
-            parser.Train(traindata)
+
+            parser.Train(traindata, om, options)
             print 'Finished epoch ' + str(epoch)
 
-            model_file = os.path.join(outdir, options.model + str(epoch))
-            parser.Save(model_file)
+            if not options.top_k_epochs: # save a model for each epoch as normal
+                model_file = os.path.join(outdir, options.model + str(epoch))
+                parser.Save(model_file)
 
             if options.pred_dev: # use the model to predict on dev data
-
-                if options.multiling:
-                    pred_langs = [lang for lang in om.languages if lang.pred_dev] # languages which have dev data on which to predict
-                    for lang in pred_langs:
-                        lang.outfilename = os.path.join(lang.outdir, 'dev_epoch_' + str(epoch) + '.conllu')
-                        print "Predicting on dev data for " + lang.name
-                    devdata = utils.read_conll_dir(pred_langs,"dev")
-                    pred = list(parser.Predict(devdata))
-                    if len(pred)>0:
-                        utils.write_conll_multiling(pred,pred_langs)
-                    else:
-                        print "Warning: prediction empty"
-                    if options.pred_eval:
-                        for lang in pred_langs:
-                            print "Evaluating dev prediction for " + lang.name
-                            utils.evaluate(lang.dev_gold,lang.outfilename,om.conllu)
-                else: # monolingual case
-                    if cur_treebank.pred_dev:
-                        print "Predicting on dev data for " + cur_treebank.name
-                        devdata = utils.read_conll(cur_treebank.devfile, cur_treebank.iso_id)
-                        cur_treebank.outfilename = os.path.join(outdir, 'dev_epoch_' + str(epoch) + ('.conll' if not om.conllu else '.conllu'))
-                        pred = list(parser.Predict(devdata))
-                        utils.write_conll(cur_treebank.outfilename, pred)
-                        if options.pred_eval:
-                            print "Evaluating dev prediction for " + cur_treebank.name
-                            score = utils.evaluate(cur_treebank.dev_gold,cur_treebank.outfilename,om.conllu)
-                            if options.model_selection:
-                                if score > cur_treebank.dev_best[1]:
-                                    cur_treebank.dev_best = [epoch,score]
+                predict_and_eval_dev(parser, om, options, cur_treebank, epoch)
 
             if options.deadline:
                 # keep track of duration of training+eval
@@ -99,7 +141,7 @@ def run(om,options,i):
             else:
                 # no deadline
                 exceeds_deadline = False
- 
+
             if exceeds_deadline or epoch == options.epochs:
                 # at the last epoch copy the best model to barchybrid.model
                 if not options.model_selection:
@@ -115,6 +157,10 @@ def run(om,options,i):
                 model_file = os.path.join(outdir,"barchybrid.model")
                 print "Copying " + bestmodel_file + " to " + model_file
                 copyfile(bestmodel_file,model_file)
+
+            if exceeds_deadline and epoch < options.epochs:
+                print 'Leaving epoch loop early to avoid exceeding deadline'
+                break
 
             if exceeds_deadline and epoch < options.epochs:
                 print 'Leaving epoch loop early to avoid exceeding deadline'
@@ -144,26 +190,51 @@ def run(om,options,i):
 
             ts = time.time()
 
-            if options.multiling:
-                for l in om.languages:
-                    l.outfilename = os.path.join(outdir, l.outfilename)
-                pred = list(parser.Predict(testdata))
-                utils.write_conll_multiling(pred,om.languages)
-            else:
-                if cur_treebank.outfilename:
-                    cur_treebank.outfilename = os.path.join(outdir,cur_treebank.outfilename)
-                else:
-                    cur_treebank.outfilename = os.path.join(outdir, 'out' + ('.conll' if not om.conllu else '.conllu'))
-                utils.write_conll(cur_treebank.outfilename, parser.Predict(testdata))
-
-            te = time.time()
-
             if options.pred_eval:
                 if options.multiling:
-                    for l in om.languages:
-                        print "Evaluating on " + l.name
-                        score = utils.evaluate(l.test_gold,l.outfilename,om.conllu)
-                        print "Obtained LAS F1 score of %.2f on %s" %(score,l.name)
+                    if om.weighted_tb and om.tb_weights: # write values to csv for analysis.
+                        tbidmetadata = parser.tbidmetadata # load weights and tbid values
+                        print tbidmetadata.items()
+                        filename = os.path.join(outdir, 'multi_LAS_scores.csv')
+                        needs_header = not os.path.exists(filename)
+                        with open(filename, 'a') as f:
+                            writer = csv.writer(f)
+                            if needs_header:
+                                print "Creating a new weighted tbemb csv file in outdir and writing in headers."
+                                tbids = []
+                                weights = []
+                                scores = []
+                                for tbm_index in range(len(tbidmetadata.keys())):
+                                    tbids.append('tbid%d' %(tbm_index+1))
+                                    weights.append('weight%d' %(tbm_index+1))
+                                    scores.append('las-on-tb%d' %(tbm_index+1))
+                                writer.writerow(tbids + weights + scores)
+                            for tbid, v in tbidmetadata.items():
+                                for l in om.languages:
+                                    if l.name in v:
+                                        print "Evaluating on " + l.name
+                                        score = utils.evaluate(l.test_gold, l.outfilename, om.conllu)
+                                        print "Obtained LAS F1 score of %.2f on %s" % (score, l.name)
+                                        tbidmetadata[tbid].append('%.9f' %score) # append new LAS score to our dictionary
+                            print tbidmetadata.items()
+                            tbids = []
+                            weights = []
+                            scores = []
+                            for tbid, v in sorted(tbidmetadata.items()):
+                                if len(v) < 4:
+                                    v.append('-')
+                                tbname, weight, tbindex, score = v
+                                tbids.append(tbid)
+                                weights.append(weight)
+                                scores.append(score)
+                            weight_data = tbids + weights + scores
+                            print weight_data
+                            writer.writerow(weight_data)
+                    else:
+                        for l in om.languages:
+                            print "Evaluating on " + l.name
+                            score = utils.evaluate(l.test_gold,l.outfilename,om.conllu)
+                            print "Obtained LAS F1 score of %.2f on %s" %(score,l.name)
                 else:
                     print "Evaluating on " + cur_treebank.name
                     score = utils.evaluate(cur_treebank.test_gold,cur_treebank.outfilename,om.conllu)
@@ -210,12 +281,16 @@ task mode) rather than scanning datadir.')
         help='Minimum number of training sentences required in order to create a dev file')
     group.add_option("--dev-percent", type="float", metavar="FLOAT", default=5,
         help='Percentage of training data to use as dev data')
+    group.add_option("--top-k-epochs", type="int", metavar="INTEGER", default=0,
+                     help='Only save k number of models based on dev LAS score (to save storage space)')
     group.add_option("--disable-pred-dev", action="store_false", dest="pred_dev", default=True,
         help='Disable prediction on dev data after each epoch')
     group.add_option("--disable-pred-eval", action="store_false", dest="pred_eval", default=True,
         help='Disable evaluation of prediction on dev data')
     group.add_option("--disable-model-selection", action="store_false",
         help="Disable choosing of model from best/last epoch", dest="model_selection", default=True)
+    group.add_option("--overwrite-model", action="store_true",
+        help="Overwrite model if the dev score is higher than previous best dev score", dest="overwrite_model", default=False)
     group.add_option("--use-default-seed", action="store_true",
         help="Use default random seed for Python", default=False)
     #TODO: reenable this
@@ -223,6 +298,7 @@ task mode) rather than scanning datadir.')
     group.add_option("--continueModel", metavar="FILE",
         help="Load model file, when continuing to train a previously trained model")
     group.add_option("--first-epoch", type="int", metavar="INTEGER", default=1)
+    group.add_option("--fingerprint", action="store_true", help="Log fingerprints of all data (slow)", default=False)
     parser.add_option_group(group)
 
     group = OptionGroup(parser, "Parser options")
@@ -252,6 +328,8 @@ task mode) rather than scanning datadir.')
         help="Word embedding dimensions", default=100)
     group.add_option("--lang-emb-size", type="int", metavar="INTEGER",
         help="Language embedding dimensions", default=12)
+    group.add_option("--elmo-emb-size", type="int", metavar="INTEGER", 
+        help="ELMo embedding dimensions", default=1024, dest='elmo_emb_size')
     group.add_option("--lstm-output-size", type="int", metavar="INTEGER",
         help="Word BiLSTM dimensions", default=125)
     group.add_option("--mlp-hidden-dims", type="int", metavar="INTEGER",
@@ -264,6 +342,20 @@ task mode) rather than scanning datadir.')
         help='disable the BiLSTM feature extactor')
     group.add_option("--disable-lembed", action="store_false", dest="use_lembed",
         help='disable the use of a language embedding when in multilingual mode', default=True)
+    group.add_option('--use-elmo', action='store_true', dest='use_elmo', default=False,
+        help='use ELMo representations for the data')
+    group.add_option('--elmo-script-dir', type="str", default=None, dest='elmo_script_dir',
+        help='location of gen_elmo.sh')
+    group.add_option('--elmo-layer', type="str", default='average', dest='elmo_layer',
+        help='which elmo layer to use: average, all')
+    group.add_option('--elmo-output-dir', metavar='PATH', default=None, dest='elmo_output_dir',
+        help='location of the pre-computed ELMo representations')
+    group.add_option("--weighted-tbemb", action="store_true", dest="weighted_tb", default=False,
+        help='flag to enable weighted tbemb')
+    group.add_option("--tb-weights", type="string", dest="tb_weights", default='',
+        help='specify tbid weights in the format "tbidx:weight" ')
+    group.add_option("--tb-weights-from-file", action="store_true", dest="tb_weights_from_file", default=False,
+        help="read tbemb sentence-level weights from .tbweights file")
     parser.add_option_group(group)
 
     group = OptionGroup(parser, "Debug options")
