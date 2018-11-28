@@ -209,7 +209,7 @@ def run(om,options,i):
             if options.pred_eval:
                 if options.multiling:
                     if om.weighted_tb and om.tb_weights: # write values to csv for analysis.
-                        tbidmetadata = parser.tbidmetadata # load weights and tbid values
+                        tbidmetadata = parser.get_tbidmetadata(om, options, langs) # load weights and tbid values TODO: Does this have the same result?
                         print tbidmetadata.items()
                         filename = os.path.join(outdir, 'multi_LAS_scores.csv')
                         needs_header = not os.path.exists(filename)

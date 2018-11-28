@@ -7,6 +7,7 @@ from itertools import chain
 import utils, time, random
 import numpy as np
 from copy import deepcopy
+import csv
 
 class ArcHybridLSTM:
     def __init__(self, words, pos, rels, cpos, langs, w2i, ch, options):
@@ -33,7 +34,13 @@ class ArcHybridLSTM:
         #dimensions depending on extended features
         self.nnvecs = (1 if self.headFlag else 0) + (2 if self.rlFlag or self.rlMostFlag else 0)
         self.feature_extractor = FeatureExtractor(self.model,options,words,rels,langs,w2i,ch,self.nnvecs)
+        
         self.irels = self.feature_extractor.irels
+        
+        if langs: # define langs here as well for tbidmetadata
+            self.langs = {lang: ind+1 for ind, lang in enumerate(langs)} # +1 for padding vector
+        else:
+            self.langs = None
 
 
         mlp_in_dims = options.lstm_output_size*2*self.nnvecs*(self.k+1)
@@ -41,7 +48,7 @@ class ArcHybridLSTM:
                                  options.mlp_hidden2_dims, 4, self.activation)
         self.labeled_MLP = MLP(self.model, 'labeled' ,mlp_in_dims, options.mlp_hidden_dims,
                                options.mlp_hidden2_dims,2*len(self.irels)+2,self.activation)
-
+        
 
     def __evaluate(self, stack, buf, train):
         """
@@ -189,22 +196,21 @@ class ArcHybridLSTM:
 
         costs = (left_cost, right_cost, shift_cost, swap_cost,1)
         return costs,shift_case
-
-
-    def get_weighted_tbemb(self, entry, om):
-        """
-        Creates dictionaries with tbid as key and maps to the following values: 1) weights, 2) tbname and 3) tbkey.
-        4) Is a dictionary which combines the tbid key with the values from dictionaries (1-3).
-        The tb-emb is multiplied by the weights the user specifies for each tbid.
-        """
-
+    
+        
+    def get_tbidmetadata(self, options, om, langs):
+        # NOTE:
+        # similar function to "get_weighted_tbemb" but just returning the tbidmetadata dict and not doing any computation.
+        # added this function into ArcHybridLSTM so we can retrieve "tbidmetadata" in parser.py from parser.tbidmetadata where parser is the  ArcHybridLSTM class.
+        # overkill? can we not just access the dict from FeatureExtractor? 
+        # does this achieve the same results?
+        
         tbid2weights = {} # 1 mapping to weight specified on command line
         tbid2tb = {}      # 2 mapping to tbname
         tb2key = {}       # 3 mapping from tbname to index in langslookup
         self.tbidmetadata = {}
         tbidmetadata = self.tbidmetadata
-
-
+    
         # 1: Mapping from tbid to weight
         for tb_weight in om.tb_weights.split():
             tbid, weight = tb_weight.split(':')
@@ -212,7 +218,6 @@ class ArcHybridLSTM:
                 tbid2weights[tbid] = weight
             else:
                 raise ValueError, 'weight for %r specified more than once' %tbid
-        #print tbid2weights.items()
 
         # 2: Mapping from tbid to treebank name
         #    (completeness will be checked at start of step 4)
@@ -223,24 +228,20 @@ class ArcHybridLSTM:
                 tbid = row[1]
                 if tbid in tbid2weights:
                     tbid2tb[tbid] = tb
-        #print tbid2tb.items()
 
         # 3: Mapping from treebank to lang number
         for tb, id_number in self.langs.items():
             tb = str(tb) # deal with mismatch of str and unicode types
             if tb in str(tbid2tb):
                 tb2key[tb] = id_number
-        #print tb2key.items()
 
         # 4: Append all of the above dictionary values based on tbid key
         for tbid, weight in tbid2weights.items():
             if tbid in tbid2tb:
                 tbidmetadata[tbid] = []
             else:
-                raise ValueError, 'no tbname configured for tbid %r' %tbid
+                raise ValueError, 'no tbname configured for tbid %r' %tbid        
 
-        # 5: Calculate tb vector as weigthed average of base tb vectors
-        langvec = dy.zeros(self.lang_emb_size)
         for tbid, v in tbidmetadata.items():
             tbname = tbid2tb[tbid]
             index  = tb2key[tbname]
@@ -248,10 +249,7 @@ class ArcHybridLSTM:
             v.append(tbname)
             v.append(weight)
             v.append(index)
-            base_vector = self.langslookup[index]
-            contrib = float(weight) * base_vector
-            langvec = langvec + contrib
-        return langvec
+        return tbidmetadata
 
 
     def Predict(self, data, om, options):
