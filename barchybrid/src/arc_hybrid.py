@@ -191,6 +191,69 @@ class ArcHybridLSTM:
         return costs,shift_case
 
 
+    def get_weighted_tbemb(self, entry, om):
+        """
+        Creates dictionaries with tbid as key and maps to the following values: 1) weights, 2) tbname and 3) tbkey.
+        4) Is a dictionary which combines the tbid key with the values from dictionaries (1-3).
+        The tb-emb is multiplied by the weights the user specifies for each tbid.
+        """
+
+        tbid2weights = {} # 1 mapping to weight specified on command line
+        tbid2tb = {}      # 2 mapping to tbname
+        tb2key = {}       # 3 mapping from tbname to index in langslookup
+        self.tbidmetadata = {}
+        tbidmetadata = self.tbidmetadata
+
+
+        # 1: Mapping from tbid to weight
+        for tb_weight in om.tb_weights.split():
+            tbid, weight = tb_weight.split(':')
+            if tbid not in tbid2weights:
+                tbid2weights[tbid] = weight
+            else:
+                raise ValueError, 'weight for %r specified more than once' %tbid
+        #print tbid2weights.items()
+
+        # 2: Mapping from tbid to treebank name
+        #    (completeness will be checked at start of step 4)
+        with open("../config/tbnames.tsv") as tsvfile:
+            reader = csv.reader(tsvfile, delimiter='\t')
+            for row in reader:
+                tb = row[0]
+                tbid = row[1]
+                if tbid in tbid2weights:
+                    tbid2tb[tbid] = tb
+        #print tbid2tb.items()
+
+        # 3: Mapping from treebank to lang number
+        for tb, id_number in self.langs.items():
+            tb = str(tb) # deal with mismatch of str and unicode types
+            if tb in str(tbid2tb):
+                tb2key[tb] = id_number
+        #print tb2key.items()
+
+        # 4: Append all of the above dictionary values based on tbid key
+        for tbid, weight in tbid2weights.items():
+            if tbid in tbid2tb:
+                tbidmetadata[tbid] = []
+            else:
+                raise ValueError, 'no tbname configured for tbid %r' %tbid
+
+        # 5: Calculate tb vector as weigthed average of base tb vectors
+        langvec = dy.zeros(self.lang_emb_size)
+        for tbid, v in tbidmetadata.items():
+            tbname = tbid2tb[tbid]
+            index  = tb2key[tbname]
+            weight = tbid2weights[tbid]
+            v.append(tbname)
+            v.append(weight)
+            v.append(index)
+            base_vector = self.langslookup[index]
+            contrib = float(weight) * base_vector
+            langvec = langvec + contrib
+        return langvec
+
+
     def Predict(self, data, om, options):
         reached_max_swap = 0
         for iSentence, osentence in enumerate(data,1):

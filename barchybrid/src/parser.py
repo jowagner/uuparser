@@ -1,4 +1,5 @@
 from optparse import OptionParser, OptionGroup
+import arc_hybrid
 from arc_hybrid import ArcHybridLSTM
 from options_manager import OptionsManager
 import pickle, utils, os, time, sys, copy, itertools, re, random
@@ -190,6 +191,21 @@ def run(om,options,i):
 
             ts = time.time()
 
+
+            if options.multiling:
+                for l in om.languages:
+                    l.outfilename = os.path.join(outdir, l.outfilename)
+                pred = list(parser.Predict(testdata, om, options))
+                utils.write_conll_multiling(pred, om.languages)
+            else:
+                if cur_treebank.outfilename:
+                    cur_treebank.outfilename = os.path.join(outdir, cur_treebank.outfilename)
+                else:
+                    cur_treebank.outfilename = os.path.join(outdir, 'out' + ('.conll' if not om.conllu else '.conllu'))
+                utils.write_conll(cur_treebank.outfilename, parser.Predict(testdata, om, options))
+
+            te = time.time()
+
             if options.pred_eval:
                 if options.multiling:
                     if om.weighted_tb and om.tb_weights: # write values to csv for analysis.
@@ -328,7 +344,7 @@ task mode) rather than scanning datadir.')
         help="Word embedding dimensions", default=100)
     group.add_option("--lang-emb-size", type="int", metavar="INTEGER",
         help="Language embedding dimensions", default=12)
-    group.add_option("--elmo-emb-size", type="int", metavar="INTEGER", 
+    group.add_option("--elmo-emb-size", type="int", metavar="INTEGER",
         help="ELMo embedding dimensions", default=1024, dest='elmo_emb_size')
     group.add_option("--lstm-output-size", type="int", metavar="INTEGER",
         help="Word BiLSTM dimensions", default=125)

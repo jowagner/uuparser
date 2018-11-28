@@ -64,20 +64,18 @@ class UDtreebank(Treebank):
     def __init__(self, treebank_info, location, shared_task=False, shared_task_data_dir=None):
         """
         Read treebank info to a treebank object
-        The treebank_info element contains different information if in
-        shared_task mode or not
+        The treebank_info element contains different information if in shared_task mode or not
         If not: it contains a tuple with name + iso ID
         Else: it contains a dictionary with some information
         """
         if shared_task:
             self.lcode = treebank_info['lcode']
             if treebank_info['tcode'] == '0':
-                self.iso_id = treebank_info['lcode']
+                self.iso_id = treebank_info['lcode'] # iso id becomes the language code
             else:
                 self.iso_id = treebank_info['lcode'] + '_' + treebank_info['tcode']
             #self.testfile = location + self.iso_id + '.conllu'
-            #setting where I have Yan's output as input
-            self.testfile = location + self.iso_id + '.txt'
+            self.testfile = location + self.iso_id + '.txt' # if using UUsegmenter as input
             if not os.path.exists(self.testfile):
                 self.testfile = shared_task_data_dir + self.iso_id + '.conllu'
             self.dev_gold = shared_task_data_dir + self.iso_id + '.conllu'
@@ -409,19 +407,14 @@ def strong_normalize(word):
         word = re.sub(r"\d", "0", word)
 
 
-def evaluate(gold,test,conllu):
+def evaluate(gold, test, conllu):
     scoresfile = test + '.txt'
     print "Writing to " + scoresfile
-    print 'gold: ' +gold
-    print 'test: ' +test
     if not conllu:
-        print 'Using src/utils/eval.pl for evaluation'
-        #os.system('perl src/utils/eval.pl -g ' + gold + ' -s ' + test  + ' > ' + scoresfile + ' &')
         os.system('perl src/utils/eval.pl -g ' + gold + ' -s ' + test  + ' > ' + scoresfile )
     else:
-        print 'Using src/utils/evaluation_script/conll17_ud_eval.py for evaluation'
-        os.system('python src/utils/evaluation_script/conll17_ud_eval.py -v -w src/utils/evaluation_script/weights.clas ' + gold + ' ' + test + ' > ' + scoresfile)
-    score = get_LAS_score(scoresfile,conllu)
+        os.system('python src/utils/evaluation_script/conll17_ud_eval.py -v -w src/utils/evaluation_script/weights.clas ' + gold + ' ' + test + ' > ' + scoresfile) # need to switch to conll18
+    score = get_LAS_score(scoresfile, conllu)
     return score
 
 
