@@ -25,11 +25,15 @@ class FeatureExtractor(object):
         self.rels = {word: ind for ind, word in enumerate(rels)}
         self.nnvecs = nnvecs
         
+        elmo_pad = ['*PAD*'] # dummy list for elmo pad
+        
         if langs:
             self.langs = {lang: ind+1 for ind, lang in enumerate(langs)} # +1 for padding vector
         else:
             self.langs = None
-            
+        
+        print self.langs
+        
         self.irels = rels
         self.external_embedding = None
         if options.external_embedding is not None:
@@ -63,11 +67,9 @@ class FeatureExtractor(object):
                                   dropout_rate=0.33)
 
         self.clookup = self.model.add_lookup_parameters((len(ch) + 1, self.char_emb_size))
-        self.wlookup = self.model.add_lookup_parameters((len(words) + 2, self.word_emb_size))
-        
+        self.wlookup = self.model.add_lookup_parameters((len(words) + 2, self.word_emb_size))        
         # NOTE: dummy entry so we can take same padding value as word
-        # create dummy 'words' object and just have a padding id in there instead? - save memory
-        self.elmolookup = self.model.add_lookup_parameters((len(words) + 2, self.elmo_emb_size))
+        self.elmolookup = self.model.add_lookup_parameters((len(elmo_pad), self.elmo_emb_size))
         
         if self.multiling and self.lang_emb_size > 0:
             self.langslookup = self.model.add_lookup_parameters((len(langs) + 1, self.lang_emb_size))
@@ -82,8 +84,7 @@ class FeatureExtractor(object):
         evec = self.elookup[1] if self.external_embedding is not None else None
         paddingWordVec = self.wlookup[1]
         paddingLangVec = self.langslookup[0] if self.multiling and self.lang_emb_size > 0 else None
-        # as ELMo embeddings are stored externally, should we just use the same padding vector as we do for words?
-        paddingElmoVec = self.elmolookup[1] if self.use_elmo else None
+        paddingElmoVec = self.elmolookup[0] if self.use_elmo else None
 
 
         self.paddingVec = dy.tanh(self.word2lstm.expr() * dy.concatenate(filter(None,
