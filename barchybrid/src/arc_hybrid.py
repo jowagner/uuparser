@@ -8,47 +8,44 @@ import utils, time, random
 import numpy as np
 from copy import deepcopy
 import csv
+import os
+import h5py
 
 class ArcHybridLSTM:
     def __init__(self, words, pos, rels, cpos, langs, w2i, ch, options):
-
         import dynet as dy # import here so we don't load Dynet if just running parser.py --help for example
         global dy
-
         self.model = dy.ParameterCollection()
         self.trainer = dy.AdamTrainer(self.model, alpha=options.learning_rate)
-
         self.activations = {'tanh': dy.tanh, 'sigmoid': dy.logistic, 'relu':
                             dy.rectify, 'tanh3': (lambda x:
                             dy.tanh(dy.cwise_multiply(dy.cwise_multiply(x, x), x)))}
         self.activation = self.activations[options.activation]
-
         self.oracle = options.oracle
-
-
         self.headFlag = options.headFlag
         self.rlMostFlag = options.rlMostFlag
         self.rlFlag = options.rlFlag
         self.k = options.k
+        self.use_elmo = options.use_elmo
+        self.elmo_layer = options.elmo_layer
 
         #dimensions depending on extended features
         self.nnvecs = (1 if self.headFlag else 0) + (2 if self.rlFlag or self.rlMostFlag else 0)
         self.feature_extractor = FeatureExtractor(self.model,options,words,rels,langs,w2i,ch,self.nnvecs)
-        
+
         self.irels = self.feature_extractor.irels
-        
+
         if langs: # define langs here as well for tbidmetadata
             self.langs = {lang: ind+1 for ind, lang in enumerate(langs)} # +1 for padding vector
         else:
             self.langs = None
-
 
         mlp_in_dims = options.lstm_output_size*2*self.nnvecs*(self.k+1)
         self.unlabeled_MLP = MLP(self.model, 'unlabeled', mlp_in_dims, options.mlp_hidden_dims,
                                  options.mlp_hidden2_dims, 4, self.activation)
         self.labeled_MLP = MLP(self.model, 'labeled' ,mlp_in_dims, options.mlp_hidden_dims,
                                options.mlp_hidden2_dims,2*len(self.irels)+2,self.activation)
-        
+
 
     def __evaluate(self, stack, buf, train):
         """
@@ -71,7 +68,6 @@ class ArcHybridLSTM:
         input = dy.concatenate(list(chain(*(topStack + topBuffer))))
         output = self.unlabeled_MLP(input)
         routput = self.labeled_MLP(input)
-
 
         #scores, unlabeled scores
         scrs, uscrs = routput.value(), output.value()
@@ -161,6 +157,7 @@ class ArcHybridLSTM:
             if self.rlFlag:
                 parent.lstms[best[1] + hoffset] = child.vec
 
+
     def calculate_cost(self,scores,s0,s1,b,beta,stack_ids):
         if len(scores[0]) == 0:
             left_cost = 1
@@ -196,21 +193,21 @@ class ArcHybridLSTM:
 
         costs = (left_cost, right_cost, shift_cost, swap_cost,1)
         return costs,shift_case
-    
-        
+
+
     def get_tbidmetadata(self, options, om, langs):
         # NOTE:
         # similar function to "get_weighted_tbemb" but just returning the tbidmetadata dict and not doing any computation.
         # added this function into ArcHybridLSTM so we can retrieve "tbidmetadata" in parser.py from parser.tbidmetadata where parser is the  ArcHybridLSTM class.
-        # overkill? can we not just access the dict from FeatureExtractor? 
+        # overkill? can we not just access the dict from FeatureExtractor?
         # does this achieve the same results?
-        
+
         tbid2weights = {} # 1 mapping to weight specified on command line
         tbid2tb = {}      # 2 mapping to tbname
         tb2key = {}       # 3 mapping from tbname to index in langslookup
         self.tbidmetadata = {}
         tbidmetadata = self.tbidmetadata
-    
+
         # 1: Mapping from tbid to weight
         for tb_weight in om.tb_weights.split():
             tbid, weight = tb_weight.split(':')
@@ -240,7 +237,7 @@ class ArcHybridLSTM:
             if tbid in tbid2tb:
                 tbidmetadata[tbid] = []
             else:
-                raise ValueError, 'no tbname configured for tbid %r' %tbid        
+                raise ValueError, 'no tbname configured for tbid %r' %tbid
 
         for tbid, v in tbidmetadata.items():
             tbname = tbid2tb[tbid]
@@ -253,16 +250,36 @@ class ArcHybridLSTM:
 
 
     def Predict(self, data, om, options):
+        pred_index = 0
+
+        if self.use_elmo:
+            print "using elmo"
+            vecs_file = os.path.join(options.elmo_output_dir, 'en_lines_dev_sentences.hdf5') # sample filename for the moment
+            if os.path.exists(vecs_file):
+                print("using elmo file {}".format(vecs_file))
+                h5py_file = h5py.File(vecs_file, 'r')
+            else:
+                print 'cannot find elmo file'
+
         reached_max_swap = 0
         for iSentence, osentence in enumerate(data,1):
             sentence = deepcopy(osentence)
             reached_swap_for_i_sentence = False
             max_swap = 2*len(sentence)
             iSwap = 0
+
             self.feature_extractor.Init()
             conll_sentence = [entry for entry in sentence if isinstance(entry, utils.ConllEntry)]
             conll_sentence = conll_sentence[1:] + [conll_sentence[0]]
-            self.feature_extractor.getWordEmbeddings(conll_sentence, False, om)
+            tokenized_sent = [entry.form for entry in sentence if isinstance(entry, utils.ConllEntry) and not entry.form == u"*root*"]
+
+            if self.use_elmo:
+                if self.elmo_layer == "average":
+                    elmo_embeddings_np = h5py_file[str(pred_index)][:]
+                    assert elmo_embeddings_np.shape[0] == len(tokenized_sent)
+                    elmo_embeddings = dy.inputTensor(elmo_embeddings_np)
+
+            self.feature_extractor.getWordEmbeddings(conll_sentence, False, om, elmo_embeddings if self.use_elmo else None)
             stack = ParseForest([])
             buf = ParseForest(conll_sentence)
 
@@ -285,6 +302,7 @@ class ArcHybridLSTM:
                 if best[1] == 3:
                     iSwap += 1
 
+
             dy.renew_cg()
 
             #keep in memory the information we need, not all the vectors
@@ -293,6 +311,8 @@ class ArcHybridLSTM:
             for tok_o, tok in zip(oconll_sentence, conll_sentence):
                 tok_o.pred_relation = tok.pred_relation
                 tok_o.pred_parent_id = tok.pred_parent_id
+
+            pred_index += 1
             yield osentence
 
 
@@ -303,21 +323,38 @@ class ArcHybridLSTM:
         lerrors = 0
         etotal = 0
         ninf = -float('inf')
-
+        train_idx = 0
 
         beg = time.time()
         start = time.time()
-
-        random.shuffle(trainData) # in certain cases the data will already have been shuffled after being read from file or while creating dev data
-        print "Length of training data: ", len(trainData)
 
         errs = []
 
         self.feature_extractor.Init()
 
-        for iSentence, sentence in enumerate(trainData,1):
-            if iSentence % 100 == 0:
-                loss_message = 'Processing sentence number: %d'%iSentence + \
+        if self.use_elmo:
+            print "using elmo"
+            vecs_file = os.path.join(options.elmo_output_dir, 'en_lines_train_sentences.hdf5') # sample filename for the moment
+            if os.path.exists(vecs_file):
+                print("using elmo file {}".format(vecs_file))
+                h5py_file = h5py.File(vecs_file, 'r')
+            else:
+                print 'cannot find elmo file' # we are assuming this is done beforehand.
+
+        permutation = list(range(len(trainData)))
+        random.shuffle(permutation)
+
+        sentence_dict = {} # store sentences here and access them with permutation key (which is shuffled)
+        for iSentence, sentence in enumerate(trainData):
+            if iSentence not in sentence_dict.keys():
+                sentence_dict[iSentence] = sentence
+
+        print "Length of training data: ", len(trainData)
+
+        for iPermutation in permutation:
+            sentence = sentence_dict.get(iPermutation)
+            if (train_idx+1) % 100 == 0:
+                loss_message = 'Processing sentence number: %d'%train_idx+1 + \
                 ' Loss: %.3f'%(eloss / etotal)+ \
                 ' Errors: %.3f'%((float(eerrors)) / etotal)+\
                 ' Labeled Errors: %.3f'%(float(lerrors) / etotal)+\
@@ -333,7 +370,16 @@ class ArcHybridLSTM:
 
             conll_sentence = [entry for entry in sentence if isinstance(entry, utils.ConllEntry)]
             conll_sentence = conll_sentence[1:] + [conll_sentence[0]]
-            self.feature_extractor.getWordEmbeddings(conll_sentence, True, om)
+            tokenized_sent = [entry.form for entry in sentence if isinstance(entry, utils.ConllEntry) and not entry.form == u"*root*"]
+
+            if self.use_elmo:
+                if self.elmo_layer == "average":
+                    elmo_embeddings_np = h5py_file[str(iPermutation)][:]
+                    assert elmo_embeddings_np.shape[0] == len(tokenized_sent)
+                    elmo_embeddings = dy.inputTensor(elmo_embeddings_np)
+
+            self.feature_extractor.getWordEmbeddings(conll_sentence, True, om, elmo_embeddings if self.use_elmo else None)
+
             stack = ParseForest([])
             buf = ParseForest(conll_sentence)
             hoffset = 1 if self.headFlag else 0
@@ -425,6 +471,8 @@ class ArcHybridLSTM:
                 dy.renew_cg()
                 self.feature_extractor.Init()
 
+
+
         if len(errs) > 0:
             eerrs = (dy.esum(errs))
             eerrs.scalar_value()
@@ -436,6 +484,7 @@ class ArcHybridLSTM:
 
             dy.renew_cg()
 
+            train_idx += 1
         self.trainer.update()
         print "Loss: ", mloss/iSentence
         print "Total Training Time: %.2gs"%(time.time()-beg)

@@ -63,6 +63,10 @@ class FeatureExtractor(object):
 
         self.clookup = self.model.add_lookup_parameters((len(ch) + 1, self.char_emb_size))
         self.wlookup = self.model.add_lookup_parameters((len(words) + 2, self.word_emb_size))
+        
+        # NOTE: dummy entry so we can take same padding value as word
+        self.elmolookup = self.model.add_lookup_parameters((len(words) + 2, self.elmo_emb_size))
+        
         if self.multiling and self.lang_emb_size > 0:
             self.langslookup = self.model.add_lookup_parameters((len(langs) + 1, self.lang_emb_size))
 
@@ -71,14 +75,19 @@ class FeatureExtractor(object):
         self.word2lstmbias = self.model.add_parameters((self.lstm_output_size *2))
         self.chPadding = self.model.add_parameters((self.char_lstm_output_size *2))
 
+
     def Init(self):
         evec = self.elookup[1] if self.external_embedding is not None else None
         paddingWordVec = self.wlookup[1]
         paddingLangVec = self.langslookup[0] if self.multiling and self.lang_emb_size > 0 else None
+        # as ELMo embeddings are stored externally, should we just use the same padding vector as we do for words?
+        paddingElmoVec = self.elmolookup[1] if self.use_elmo else None
+
 
         self.paddingVec = dy.tanh(self.word2lstm.expr() * dy.concatenate(filter(None,
                                                                                 [paddingWordVec,
                                                                                  evec,
+                                                                                 paddingElmoVec,
                                                                                  self.chPadding.expr(),
                                                                                  paddingLangVec])) + self.word2lstmbias.expr() )
         self.empty = self.paddingVec if self.nnvecs == 1 else dy.concatenate([self.paddingVec for _ in xrange(self.nnvecs)])
@@ -146,9 +155,13 @@ class FeatureExtractor(object):
         return langvec
 
 
-    def getWordEmbeddings(self, sentence, train, om):
+    def getWordEmbeddings(self, sentence, train, om, elmo_embeddings):
+        cur_word_index = 0
         root_count = 0
-        for root in sentence:
+        
+        for iRoot, root in enumerate(sentence):
+            cur_word_index = iRoot - 1
+            
             wordcount = float(self.wordsCount.get(root.norm, 0))
             noDropFlag =  not train or (random.random() < (wordcount/(0.25+wordcount)))
             root.wordvec = self.wlookup[int(self.vocab.get(root.norm, 0)) if noDropFlag else 0]
@@ -180,23 +193,25 @@ class FeatureExtractor(object):
             else:
                 root.langvec = None
 
+            # ELMo token embedding
             if self.use_elmo:
                 if self.elmo_layer == "average":
                     if cur_word_index < 0:
-                        root.elmo_vec = dy.zeros(1024)
+                        root.elmovec = dy.zeros(1024)
                     else:
-                        root.elmo_vec = elmo_embeddings[cur_word_index] # we only use the current word index on valid words and not on the placeholder root token.
+                        root.elmovec = elmo_embeddings[cur_word_index] # we only use the current word index on valid words and not on the placeholder root token.
             else:
-                elmo_vec = None
-
+                root.elmovec = None
 
             root.vec = dy.concatenate(filter(None, [root.wordvec,
                                                         root.evec,
                                                         root.chVec,
-                                                        root.langvec])) #TODO: root.elmo_vec
+                                                        root.langvec,
+                                                        root.elmovec]))
         if not self.disableBilstm:
             self.bilstm1.set_token_vecs(sentence,train)
             self.bilstm2.set_token_vecs(sentence,train)
+
 
     def get_char_vector(self,root,train):
         if root.form == "*root*": # no point running a character analysis over this placeholder token
@@ -224,27 +239,3 @@ class FeatureExtractor(object):
         self.extrnd['*INITIAL*'] = 2
 
         print 'Load external embedding. Vector dimensions', self.edim
-
-
-    def compute_elmo_embeddings(self, data, options, data_type):
-        print data_type
-        tokenized_sents = []
-        elmo_sent_file = os.path.join(options.elmo_output_dir, '%s_concat_sentences.txt') % (data_type)
-        for sentence in data:
-            tokenized_sent = [entry.form for entry in sentence if isinstance(entry, utils.ConllEntry) and not entry.form == u"*root*"]
-            tokenized_sent = [word.encode('utf-8') for word in tokenized_sent]
-            tokenized_sents.append(tokenized_sent)
-
-        newline_sents = ('\n'.join(' '.join(map(str, sent)) for sent in tokenized_sents))
-        newline_sents = (newline_sents.decode('utf-8', errors='ignore'))
-        with codecs.open(elmo_sent_file, 'w', encoding='utf-8') as f:
-            f.write(unicode(newline_sents))
-
-        elmo_script = os.path.join(options.elmo_script_dir, 'gen_elmo.sh')
-        gen_elmo_command = os.path.join(elmo_script + ' %s/%s_concat_sentences.txt' + ' %s/%s_concat_sentences.hdf5' + ' --average' ) % (options.elmo_output_dir, data_type, options.elmo_output_dir, data_type)
-        print "generating elmo vectors: ", gen_elmo_command
-        os.system(gen_elmo_command)
-        vecs_file = os.path.join(options.elmo_output_dir, '%s_concat_sentences.hdf5') % (data_type)
-        h5py_file = h5py.File(vecs_file, 'r')
-        print "finished generating elmo representations."
-        return h5py_file

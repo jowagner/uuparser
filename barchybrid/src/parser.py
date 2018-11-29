@@ -361,9 +361,9 @@ task mode) rather than scanning datadir.')
     group.add_option('--use-elmo', action='store_true', dest='use_elmo', default=False,
         help='use ELMo representations for the data')
     group.add_option('--elmo-script-dir', type="str", default=None, dest='elmo_script_dir',
-        help='location of gen_elmo.sh')
+        help='location of gen_elmo.sh (only necessary if computing elmo embeddings as part of task)')
     group.add_option('--elmo-layer', type="str", default='average', dest='elmo_layer',
-        help='which elmo layer to use: average, all')
+        help='which elmo layer to use: average, all (only average is supported so far)')
     group.add_option('--elmo-output-dir', metavar='PATH', default=None, dest='elmo_output_dir',
         help='location of the pre-computed ELMo representations')
     group.add_option("--weighted-tbemb", action="store_true", dest="weighted_tb", default=False,
