@@ -11,6 +11,7 @@ import csv
 import os
 import h5py
 
+
 class ArcHybridLSTM:
     def __init__(self, words, pos, rels, cpos, langs, w2i, ch, options):
         import dynet as dy # import here so we don't load Dynet if just running parser.py --help for example
@@ -114,6 +115,7 @@ class ArcHybridLSTM:
     def Save(self, filename):
         print 'Saving model to ' + filename
         self.model.save(filename)
+
 
     def Load(self, filename):
         print 'Loading model from ' + filename
@@ -253,7 +255,6 @@ class ArcHybridLSTM:
         pred_index = 0
 
         if self.use_elmo:
-            print "using elmo"
             vecs_file = os.path.join(options.elmo_output_dir, 'en_lines_dev_sentences.hdf5') # sample filename for the moment
             if os.path.exists(vecs_file):
                 print("using elmo file {}".format(vecs_file))
@@ -333,7 +334,6 @@ class ArcHybridLSTM:
         self.feature_extractor.Init()
 
         if self.use_elmo:
-            print "using elmo"
             vecs_file = os.path.join(options.elmo_output_dir, 'en_lines_train_sentences.hdf5') # sample filename for the moment
             if os.path.exists(vecs_file):
                 print("using elmo file {}".format(vecs_file))
@@ -352,9 +352,10 @@ class ArcHybridLSTM:
         print "Length of training data: ", len(trainData)
 
         for iPermutation in permutation:
+            train_idx +=1
             sentence = sentence_dict.get(iPermutation)
-            if (train_idx+1) % 100 == 0:
-                loss_message = 'Processing sentence number: %d'%train_idx+1 + \
+            if train_idx % 100 == 0:
+                loss_message = 'Processing sentence number: %d'%train_idx + \
                 ' Loss: %.3f'%(eloss / etotal)+ \
                 ' Errors: %.3f'%((float(eerrors)) / etotal)+\
                 ' Labeled Errors: %.3f'%(float(lerrors) / etotal)+\
@@ -383,11 +384,14 @@ class ArcHybridLSTM:
             stack = ParseForest([])
             buf = ParseForest(conll_sentence)
             hoffset = 1 if self.headFlag else 0
-
+            
+            
+            #train_idx +=1
             for root in conll_sentence:
                 root.lstms = [root.vec] if self.headFlag else []
                 root.lstms += [self.feature_extractor.paddingVec for _ in range(self.nnvecs - hoffset)]
                 root.relation = root.relation if root.relation in self.irels else 'runk'
+
 
             while not (len(buf) == 1 and len(stack) == 0):
                 scores = self.__evaluate(stack, buf, True)
@@ -484,7 +488,6 @@ class ArcHybridLSTM:
 
             dy.renew_cg()
 
-            train_idx += 1
         self.trainer.update()
         print "Loss: ", mloss/iSentence
         print "Total Training Time: %.2gs"%(time.time()-beg)

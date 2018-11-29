@@ -29,6 +29,7 @@ class FeatureExtractor(object):
             self.langs = {lang: ind+1 for ind, lang in enumerate(langs)} # +1 for padding vector
         else:
             self.langs = None
+            
         self.irels = rels
         self.external_embedding = None
         if options.external_embedding is not None:
@@ -65,6 +66,7 @@ class FeatureExtractor(object):
         self.wlookup = self.model.add_lookup_parameters((len(words) + 2, self.word_emb_size))
         
         # NOTE: dummy entry so we can take same padding value as word
+        # create dummy 'words' object and just have a padding id in there instead? - save memory
         self.elmolookup = self.model.add_lookup_parameters((len(words) + 2, self.elmo_emb_size))
         
         if self.multiling and self.lang_emb_size > 0:
