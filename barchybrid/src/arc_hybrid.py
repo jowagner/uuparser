@@ -324,7 +324,6 @@ class ArcHybridLSTM:
         lerrors = 0
         etotal = 0
         ninf = -float('inf')
-        train_idx = 0
 
         beg = time.time()
         start = time.time()
@@ -343,17 +342,10 @@ class ArcHybridLSTM:
 
         permutation = list(range(len(trainData)))
         random.shuffle(permutation)
-
-        sentence_dict = {} # store sentences here and access them with permutation key (which is shuffled)
-        for iSentence, sentence in enumerate(trainData):
-            if iSentence not in sentence_dict.keys():
-                sentence_dict[iSentence] = sentence
-
         print "Length of training data: ", len(trainData)
 
-        for iPermutation in permutation:
-            train_idx +=1
-            sentence = sentence_dict.get(iPermutation)
+        for train_idx, iPermutation in enumerate(permutation):
+            sentence = trainData[iPermutation]
             if train_idx % 100 == 0:
                 loss_message = 'Processing sentence number: %d'%train_idx + \
                 ' Loss: %.3f'%(eloss / etotal)+ \
@@ -361,6 +353,7 @@ class ArcHybridLSTM:
                 ' Labeled Errors: %.3f'%(float(lerrors) / etotal)+\
                 ' Time: %.2gs'%(time.time()-start)
                 print loss_message
+                sys.stdout.flush()
                 start = time.time()
                 eerrors = 0
                 eloss = 0.0
@@ -385,8 +378,6 @@ class ArcHybridLSTM:
             buf = ParseForest(conll_sentence)
             hoffset = 1 if self.headFlag else 0
             
-            
-            #train_idx +=1
             for root in conll_sentence:
                 root.lstms = [root.vec] if self.headFlag else []
                 root.lstms += [self.feature_extractor.paddingVec for _ in range(self.nnvecs - hoffset)]
@@ -491,3 +482,5 @@ class ArcHybridLSTM:
         self.trainer.update()
         print "Loss: ", mloss/iSentence
         print "Total Training Time: %.2gs"%(time.time()-beg)
+        sys.stdout.flush()
+
