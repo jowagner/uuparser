@@ -485,21 +485,21 @@ def main():
 
     # Print the evaluation
     if not args.verbose:
-        print("LAS F1 Score: {:.2f}".format(100 * evaluation["LAS"].f1))
+        print("LAS F1 Score: {:.9f}".format(100 * evaluation["LAS"].f1))
     else:
         metrics = ["Tokens", "Sentences", "Words", "UPOS", "XPOS", "Feats", "AllTags", "Lemmas", "UAS", "LAS"]
         if args.weights is not None:
             metrics.append("WeightedLAS")
 
-        print("Metrics    | Precision |    Recall |  F1 Score | AligndAcc")
-        print("-----------+-----------+-----------+-----------+-----------")
+        print("Metrics    |        Precision |           Recall |         F1 Score |        AligndAcc")
+        print("-----------+------------------+------------------+------------------+------------------")
         for metric in metrics:
-            print("{:11}|{:10.2f} |{:10.2f} |{:10.2f} |{}".format(
+            print("{:11}|{:17.9f} |{:17.9f} |{:17.9f} |{}".format(
                 metric,
                 100 * evaluation[metric].precision,
                 100 * evaluation[metric].recall,
                 100 * evaluation[metric].f1,
-                "{:10.2f}".format(100 * evaluation[metric].aligned_accuracy) if evaluation[metric].aligned_accuracy is not None else ""
+                "{:17.9f}".format(100 * evaluation[metric].aligned_accuracy) if evaluation[metric].aligned_accuracy is not None else ""
             ))
 
 if __name__ == "__main__":
