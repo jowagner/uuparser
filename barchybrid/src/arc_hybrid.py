@@ -398,7 +398,7 @@ class ArcHybridLSTM:
 
         for train_idx, iPermutation in enumerate(permutation):
             sentence = trainData[iPermutation]
-            if train_idx and etotal and (train_idx % 100 == 0):
+            if train_idx and etotal and (train_idx % 500 == 0):
                 loss_message = 'Processed %d sentences.'%train_idx + \
                 ' Loss: %.3f'%(eloss / etotal)+ \
                 ' Errors: %.3f'%((float(eerrors)) / etotal)+\
