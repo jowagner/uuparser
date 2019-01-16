@@ -8,15 +8,15 @@ import codecs
 import csv
 import operator
 
-top_k_dict = {} # keep populating this dictionary if we have a higher dev score, if the number of entries exceeds 'k', overwrite the minimum k,v pair.
 
 def predict_and_eval_dev(parser, om, options, cur_treebank, epoch):
-
+    retval = None
     if options.multiling:
         pred_langs = [lang for lang in om.languages if lang.pred_dev] # languages which have dev data on which to predict
         for lang in pred_langs:
             lang.outfilename = os.path.join(lang.outdir, 'dev_epoch_' + str(epoch) + '.conllu')
             print "Predicting on dev data for " + lang.name
+        sys.stdout.flush()
         devdata = list(utils.read_conll_dir(pred_langs, "dev"))
         if options.fingerprint and epoch == options.first_epoch:
             parser.print_data_fingerprint(devdata, 'dev data')
@@ -28,12 +28,18 @@ def predict_and_eval_dev(parser, om, options, cur_treebank, epoch):
         else:
             print "Warning: prediction empty"
         if options.pred_eval:
+            score_total = 0.0
             for lang in pred_langs:
                 print "Evaluating dev prediction for " + lang.name
-                utils.evaluate(lang.dev_gold, lang.outfilename, om.conllu)
+                sys.stdout.flush()
+                score = utils.evaluate(lang.dev_gold, lang.outfilename, om.conllu)
+                score_total += score
+            if pred_langs:
+                retval = score_total / len(pred_langs)
     else: # monolingual case
         if cur_treebank.pred_dev:
             print "Predicting on dev data for " + cur_treebank.name
+            sys.stdout.flush()
             devdata = list(utils.read_conll(cur_treebank.devfile, cur_treebank.iso_id))
             if options.fingerprint and epoch == options.first_epoch:
                 parser.print_data_fingerprint(devdata, 'dev data')
@@ -42,37 +48,14 @@ def predict_and_eval_dev(parser, om, options, cur_treebank, epoch):
             utils.write_conll(cur_treebank.outfilename, pred)
             if options.pred_eval:
                 print "Evaluating dev prediction for " + cur_treebank.name
+                sys.stdout.flush()
                 score = utils.evaluate(cur_treebank.dev_gold, cur_treebank.outfilename, om.conllu)
                 if options.model_selection:
                     if score > cur_treebank.dev_best[1]:
                         cur_treebank.dev_best = [epoch, score]
-                        if options.top_k_epochs: #TODO try Python's heapq module
-                            top_k_dict[epoch] = score
-                            model_file = os.path.join(cur_treebank.outdir, options.model + str(epoch)) # write in the first few models, they will be overwritten later
-                            parser.Save(model_file)
-                            if len(top_k_dict) == options.top_k_epochs + 1: # + 1 because we're going to delete an entry so we are left with k after adding the new element.
-                                print 'Reached k model entries, clearing lowest entry'
-                                sorted_top_k = sorted(top_k_dict.items(), key=operator.itemgetter(1)) # sort by second element in tuple (LAS).
-                                min_entry = sorted_top_k[0]
-                                min_epoch, min_score = min_entry[0], min_entry[1]
-                                del top_k_dict[min_epoch]
-                                min_model_file = os.path.join(cur_treebank.outdir, options.model + str(min_epoch)) # remove the model we have just cleared from the dict.
-                                if os.path.exists(min_model_file):
-                                    os.remove(min_model_file)
-                    else: # we need to overwrite lower entries in the dictionary, e.g. in the case that dev is not higher than current best dev but is higher than lowest dict entry.
-                        if options.top_k_epochs:
-                            sorted_top_k = sorted(top_k_dict.items(), key=operator.itemgetter(1))
-                            min_entry = sorted_top_k[0]
-                            min_epoch, min_score = min_entry[0], min_entry[1]
-                            if score > min_score: # we can assume we already have a value for min_score as the if statement above will always be true for the first epoch.
-                                top_k_dict[epoch] = score # add new element to dictionary
-                                del top_k_dict[min_epoch]
-                                model_file = os.path.join(cur_treebank.outdir, options.model + str(epoch))
-                                parser.Save(model_file)
-                                min_model_file = os.path.join(cur_treebank.outdir, options.model + str(min_epoch))
-                                if os.path.exists(min_model_file):
-                                    os.remove(min_model_file)
+                retval = score
     sys.stdout.flush()
+    return retval
 
 
 def run(om,options,i):
@@ -120,12 +103,16 @@ def run(om,options,i):
             parser.Train(traindata, om, options)
             print 'Finished epoch ' + str(epoch)
 
-            if not options.top_k_epochs: # save a model for each epoch as normal
-                model_file = os.path.join(outdir, options.model + str(epoch))
-                parser.Save(model_file)
 
             if options.pred_dev: # use the model to predict on dev data
-                predict_and_eval_dev(parser, om, options, cur_treebank, epoch)
+                score = predict_and_eval_dev(parser, om, options, cur_treebank, epoch)
+            else:
+                score = None
+            if score is not None:
+                print 'Model score after epoch %d: %.9f' %(epoch, score)
+
+            model_file = os.path.join(outdir, options.model + str(epoch))
+            parser.Save(model_file, score, options.top_k_epochs)
 
             if options.deadline:
                 # keep track of duration of training+eval
@@ -154,14 +141,13 @@ def run(om,options,i):
                     if cur_treebank.model_selection:
                         print "Best dev score of " + str(cur_treebank.dev_best[1]) + " found at epoch " + str(cur_treebank.dev_best[0])
 
-                bestmodel_file = os.path.join(outdir,"barchybrid.model" + str(best_epoch))
-                model_file = os.path.join(outdir,"barchybrid.model")
-                print "Copying " + bestmodel_file + " to " + model_file
-                copyfile(bestmodel_file,model_file)
-
-            if exceeds_deadline and epoch < options.epochs:
-                print 'Leaving epoch loop early to avoid exceeding deadline'
-                break
+                # Commented out code below as the last epoch file may be
+                # missing due to --top-k-epochs and we do not use the copy
+                # anyway.
+                #bestmodel_file = os.path.join(outdir,"barchybrid.model" + str(best_epoch))
+                #model_file = os.path.join(outdir,"barchybrid.model")
+                #print "Copying " + bestmodel_file + " to " + model_file
+                #copyfile(bestmodel_file,model_file)
 
             if exceeds_deadline and epoch < options.epochs:
                 print 'Leaving epoch loop early to avoid exceeding deadline'

@@ -10,6 +10,8 @@ from copy import deepcopy
 import csv
 import os
 import h5py
+import heapq
+import sys
 
 
 class ArcHybridLSTM:
@@ -29,6 +31,7 @@ class ArcHybridLSTM:
         self.k = options.k
         self.use_elmo = options.use_elmo
         self.elmo_layer = options.elmo_layer
+        self.top_k_scores_with_filename = []
 
         #dimensions depending on extended features
         self.nnvecs = (1 if self.headFlag else 0) + (2 if self.rlFlag or self.rlMostFlag else 0)
@@ -112,9 +115,23 @@ class ArcHybridLSTM:
         return ret
 
 
-    def Save(self, filename):
+    def Save(self, filename, score = None, k = 3):
+        if score is not None \
+        and len(self.top_k_scores_with_filename) == k \
+        and score <= self.top_k_scores_with_filename[0][0]:
+            # model does not need to be saved
+            return
         print 'Saving model to ' + filename
+        sys.stdout.flush()
         self.model.save(filename)
+        if score is not None:
+            heapq.heappush(self.top_k_scores_with_filename, (score, filename))
+            if len(self.top_k_scores_with_filename) > k:
+                print 'Exceeded k model entries, clearing lowest scoring entry'
+                _, min_model_file = heapq.heappop(self.top_k_scores_with_filename)
+                # remove the model we have just cleared from the heap
+                if os.path.exists(min_model_file):
+                    os.remove(min_model_file)
 
 
     def Load(self, filename):
@@ -317,6 +334,34 @@ class ArcHybridLSTM:
             yield osentence
 
 
+    def print_data_fingerprint(self, data, name = 'training data', permutation = None):
+        import hashlib
+        m = hashlib.sha256()
+        for iSentence, sentence in enumerate(data):
+            if permutation:
+                sentence = data[permutation[iSentence]]
+            m.update('%d\t%d\n' %(iSentence, len(sentence)))
+            for entry in sentence:
+                if isinstance(entry, utils.ConllEntry):
+                    conllu_line = entry.__str__().encode('utf-8')
+                    m.update('\t%d\t%s\n' %(len(conllu_line), conllu_line))
+        print '%s fingerprint: %s' %(name.capitalize(), m.hexdigest())
+        sys.stdout.flush()
+
+
+    def print_prng_fingerprint(self, n = 80):
+        import hashlib
+        perm = list(range(n))
+        state_backup = random.getstate()
+        random.shuffle(perm)
+        random.setstate(state_backup)
+        m = hashlib.sha256()
+        for i, j in enumerate(perm):
+            m.update('%d:%d\n' %(i,j))
+        print "Random permutation fingerprint: ", m.hexdigest()
+        sys.stdout.flush()
+
+
     def Train(self, trainData, om, options):
         mloss = 0.0
         eloss = 0.0
@@ -324,6 +369,9 @@ class ArcHybridLSTM:
         lerrors = 0
         etotal = 0
         ninf = -float('inf')
+
+        if options.fingerprint:
+            self.print_prng_fingerprint()
 
         beg = time.time()
         start = time.time()
@@ -340,18 +388,22 @@ class ArcHybridLSTM:
             else:
                 print 'cannot find elmo file' # we are assuming this is done beforehand.
 
-        permutation = list(range(len(trainData)))
+        numSentences = len(trainData)
+        permutation = list(range(numSentences))
         random.shuffle(permutation)
         print "Length of training data: ", len(trainData)
 
+        if options.fingerprint:
+            self.print_data_fingerprint(trainData, permutation = permutation)
+
         for train_idx, iPermutation in enumerate(permutation):
             sentence = trainData[iPermutation]
-            if train_idx % 100 == 0:
-                loss_message = 'Processing sentence number: %d'%train_idx + \
+            if train_idx and etotal and (train_idx % 100 == 0):
+                loss_message = 'Processed %d sentences.'%train_idx + \
                 ' Loss: %.3f'%(eloss / etotal)+ \
                 ' Errors: %.3f'%((float(eerrors)) / etotal)+\
                 ' Labeled Errors: %.3f'%(float(lerrors) / etotal)+\
-                ' Time: %.2gs'%(time.time()-start)
+                ' Time: %.1fs'%(time.time()-start)
                 print loss_message
                 sys.stdout.flush()
                 start = time.time()
@@ -377,12 +429,11 @@ class ArcHybridLSTM:
             stack = ParseForest([])
             buf = ParseForest(conll_sentence)
             hoffset = 1 if self.headFlag else 0
-            
+
             for root in conll_sentence:
                 root.lstms = [root.vec] if self.headFlag else []
                 root.lstms += [self.feature_extractor.paddingVec for _ in range(self.nnvecs - hoffset)]
                 root.relation = root.relation if root.relation in self.irels else 'runk'
-
 
             while not (len(buf) == 1 and len(stack) == 0):
                 scores = self.__evaluate(stack, buf, True)
@@ -466,8 +517,6 @@ class ArcHybridLSTM:
                 dy.renew_cg()
                 self.feature_extractor.Init()
 
-
-
         if len(errs) > 0:
             eerrs = (dy.esum(errs))
             eerrs.scalar_value()
@@ -480,7 +529,7 @@ class ArcHybridLSTM:
             dy.renew_cg()
 
         self.trainer.update()
-        print "Loss: ", mloss/iSentence
-        print "Total Training Time: %.2gs"%(time.time()-beg)
+        print 'Loss: %.9f' %(mloss/numSentences)
+        print 'Total training time for this epoch: %.1fs' %(time.time()-beg)
         sys.stdout.flush()
 
