@@ -91,7 +91,11 @@ def run(om,options,i):
         durations = []
         for epoch in xrange(options.first_epoch, options.first_epoch+options.epochs):
 
+            print
+            print
             print 'Starting epoch ' + str(epoch)
+            print '===============' + len(str(epoch)) * '='
+            print
             start_time = time.time()
 
             if options.multiling:
