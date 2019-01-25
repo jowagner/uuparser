@@ -96,7 +96,7 @@ class FeatureExtractor(object):
         self.empty = self.paddingVec if self.nnvecs == 1 else dy.concatenate([self.paddingVec for _ in xrange(self.nnvecs)])
 
 
-    def get_weighted_tbemb(self, root, om):
+    def get_weighted_tbemb(self, om):
         """
         Creates dictionaries with tbid as key and maps to the following values: 1) weights, 2) tbname and 3) tbkey.
         4) Is a dictionary which combines the tbid key with the values from dictionaries (1-3).
@@ -116,10 +116,11 @@ class FeatureExtractor(object):
                 tbid2weights[tbid] = weight
             else:
                 raise ValueError, 'weight for %r specified more than once' %tbid
-        #print tbid2weights.items()
+        #print 'tbid2weights =', tbid2weights.items()
 
         # 2: Mapping from tbid to treebank name
         #    (completeness will be checked at start of step 4)
+        tbnames_in_weights = {}
         with open("../config/tbnames.tsv") as tsvfile:
             reader = csv.reader(tsvfile, delimiter='\t')
             for row in reader:
@@ -127,14 +128,15 @@ class FeatureExtractor(object):
                 tbid = row[1]
                 if tbid in tbid2weights:
                     tbid2tb[tbid] = tb
-        #print tbid2tb.items()
+                    tbnames_in_weights[tb] = None
+        #print 'tbid2tb =', tbid2tb.items()
 
         # 3: Mapping from treebank to lang number
         for tb, id_number in self.langs.items():
-            tb = str(tb) # deal with mismatch of str and unicode types
-            if tb in str(tbid2tb):
+            tb = tb.encode('UTF-8')
+            if tb in tbnames_in_weights:
                 tb2key[tb] = id_number
-        #print tb2key.items()
+        #print 'tb2key =', tb2key.items()
 
         # 4: Append all of the above dictionary values based on tbid key
         for tbid, weight in tbid2weights.items():
@@ -155,12 +157,23 @@ class FeatureExtractor(object):
             base_vector = self.langslookup[index]
             contrib = float(weight) * base_vector
             langvec = langvec + contrib
+        #print 'tbidmetadata =', tbidmetadata.items()
         return langvec
 
 
     def getWordEmbeddings(self, sentence, train, om, elmo_embeddings):
         cur_word_index = 0
         root_count = 0
+
+        if self.multiling and om.weighted_tb:
+            if om.tb_weights:
+                langvec = self.get_weighted_tbemb(om)
+            elif om.tb_weights_from_file:
+                # TODO: get root_entry
+                raise NotImplementedError
+                langvec = self.get_weighted_tbemb(root_entry)
+            else:
+                raise NotImplementedError
         
         for iRoot, root in enumerate(sentence):
             cur_word_index = iRoot - 1
@@ -183,14 +196,8 @@ class FeatureExtractor(object):
                 root.evec = None
 
             if self.multiling:
-                # TODO: Why do we re-calculate langvec for every word?
-                # It usually changes only per document or per sentence.
-                # (We may want to set the weights for each token some day
-                # though.)
-                if om.weighted_tb and om.tb_weights:
-                    root.langvec = self.get_weighted_tbemb(root, om)
-                elif om.weighted_tb and om.tb_weights_from_file:
-                    root.langvec = self.get_weighted_tbemb(root, root_entry)
+                if om.weighted_tb:
+                    root.langvec = langvec
                 else:
                     root.langvec = self.langslookup[self.langs[root.language_id]] if self.lang_emb_size > 0 else None
             else:
