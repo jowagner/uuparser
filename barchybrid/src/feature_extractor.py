@@ -116,7 +116,7 @@ class FeatureExtractor(object):
                 tbid2weights[tbid] = weight
             else:
                 raise ValueError, 'weight for %r specified more than once' %tbid
-        #print 'tbid2weights =', tbid2weights.items()
+        #print 'tbid2weights =', tbid2weights
 
         # 2: Mapping from tbid to treebank name
         #    (completeness will be checked at start of step 4)
@@ -129,14 +129,14 @@ class FeatureExtractor(object):
                 if tbid in tbid2weights:
                     tbid2tb[tbid] = tb
                     tbnames_in_weights[tb] = None
-        #print 'tbid2tb =', tbid2tb.items()
+        #print 'tbid2tb =', tbid2tb
 
         # 3: Mapping from treebank to lang number
         for tb, id_number in self.langs.items():
             tb = tb.encode('UTF-8')
             if tb in tbnames_in_weights:
                 tb2key[tb] = id_number
-        #print 'tb2key =', tb2key.items()
+        #print 'tb2key =', tb2key
 
         # 4: Append all of the above dictionary values based on tbid key
         for tbid, weight in tbid2weights.items():
@@ -157,7 +157,7 @@ class FeatureExtractor(object):
             base_vector = self.langslookup[index]
             contrib = float(weight) * base_vector
             langvec = langvec + contrib
-        #print 'tbidmetadata =', tbidmetadata.items()
+        #print 'tbidmetadata =', tbidmetadata
         return langvec
 
 
