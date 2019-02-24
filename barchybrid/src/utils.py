@@ -405,6 +405,7 @@ def strong_normalize(word):
         word = re.sub(r"``", '"', word)
         word = re.sub(r"''", '"', word)
         word = re.sub(r"\d", "0", word)
+        return word
 
 
 def evaluate(gold, test, conllu):
