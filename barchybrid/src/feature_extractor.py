@@ -169,8 +169,7 @@ class FeatureExtractor(object):
             if om.tb_weights:
                 langvec = self.get_weighted_tbemb(om)
             elif om.tb_weights_from_file:
-                # TODO: get root_entry
-                raise NotImplementedError
+                root_entry = sentence[0]
                 langvec = self.get_weighted_tbemb(root_entry)
             else:
                 raise NotImplementedError
