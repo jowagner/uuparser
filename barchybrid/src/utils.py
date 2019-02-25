@@ -265,6 +265,7 @@ def read_conll(filename, language=None, maxSize=-1, hard_lim=False, vocab_prep=F
                     new_root.tb_weights = tbweights_f.readline().rstrip()
                     if not new_root.tb_weights:
                         raise ValueError, 'not enough lines in %r' %tbweights_filename
+                tokens[0] = new_root
                 conll_tokens = [t for t in tokens if isinstance(t, ConllEntry)]
                 if not drop_nproj or isProj(conll_tokens): # keep going if it's projective or we're not dropping non-projective sents
                 #dropping the proj for exploring swap
@@ -297,6 +298,7 @@ def read_conll(filename, language=None, maxSize=-1, hard_lim=False, vocab_prep=F
             else:
                 # dropping sentence with no tokens and comments, i.e. two empty lines
                 print 'Warning: Found sentence with no tokens and comments, i.e. two empty lines. File not in .conllu format.'
+            tb_index += 1
             tokens = [root]
         else:
             if line[0] == '#' or '-' in tok[0] or '.' in tok[0]:

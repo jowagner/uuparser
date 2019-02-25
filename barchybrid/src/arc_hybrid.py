@@ -290,6 +290,15 @@ class ArcHybridLSTM:
             conll_sentence = [entry for entry in sentence if isinstance(entry, utils.ConllEntry)]
             conll_sentence = conll_sentence[1:] + [conll_sentence[0]]
             tokenized_sent = [entry.form for entry in sentence if isinstance(entry, utils.ConllEntry) and not entry.form == u"*root*"]
+            # restore sentence information
+            try:
+                conll_sentence[0].tb_index = sentence[0].tb_index
+            except:
+                pass
+            try:
+                conll_sentence[0].tb_weights = sentence[0].tb_weights
+            except:
+                pass
 
             if self.use_elmo:
                 if self.elmo_layer == "average":
