@@ -405,6 +405,7 @@ def parse_list_arg(l):
         f = open(l, 'r', encoding='utf-8')
         return [line.strip("\n").split()[0] for line in f]
     else:
+        l = l.replace(':', ' ')
         return [el for el in l.split(" ")]
 
 
