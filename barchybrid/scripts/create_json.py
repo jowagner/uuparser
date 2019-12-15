@@ -2,7 +2,7 @@ from glob import glob
 import os, re, json, sys
 
 # creates a json dictionary mapping treebank names to treebank ids
-# usage: python create_json.py ud_treebank_dir json_file_name
+# usage: python create_json.py ud_treebank_dir/ json_file_name
 
 paths = glob(sys.argv[1] + "*")
 outfile_json = sys.argv[2]
