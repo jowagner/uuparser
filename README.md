@@ -1,3 +1,20 @@
+# Multi-treebank support for UUParser
+
+In this branch, a team at [ADAPT Centre](https://www.adaptcentre.ie) added
+support for multi-treebank parsing models to UUParser as of commit
+commit acbd1a300e27d3992d6ef812dd44333d1f9a4e15 (March 2018).
+This modified parser was used in the paper
+
+Joachim Wagner, James Barry and Jennifer Foster
+(to appear, accepted at ACL 2020).
+Treebank Embedding Vectors for Out-of-domain Dependency Parsing.
+In Proceedings of the
+2020 Annual Conference of the Association for Computational Linguistics,
+58th Annual Meeting of the Association for Computational Linguistics.
+
+If you use this version of the parser please cite the above paper and
+the relevant papers in the original UUParser readme copied below.
+
 # UUParser
 ## Transition based dependency parser for Universal Dependencies using BiLSTM feature extractors.
 This parser is based on [Eli Kiperwasser's transition-based parser](http://github.com/elikip/bist-parser).
