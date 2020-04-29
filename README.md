@@ -1,8 +1,9 @@
 # Multi-treebank support for UUParser
 
 In this branch, a team at [ADAPT Centre](https://www.adaptcentre.ie) added
-support for multi-treebank parsing models to UUParser as of commit
-commit acbd1a300e27d3992d6ef812dd44333d1f9a4e15 (March 2018).
+support for multi-treebank parsing models to
+[UUParser](https://github.com/UppsalaNLP/uuparser)
+as of commit acbd1a300e (March 2018).
 This modified parser was used in the paper
 
 Joachim Wagner, James Barry and Jennifer Foster
