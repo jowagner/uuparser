@@ -13,7 +13,7 @@ Treebank Embedding Vectors for Out-of-domain Dependency Parsing.
 In Proceedings of the
 2020 Annual Conference of the Association for Computational Linguistics,
 58th Annual Meeting of the Association for Computational Linguistics.
-(https://www.computing.dcu.ie/~jwagner/doc/Wagner_tbev20.pdf)[Download paper]
+https://www.computing.dcu.ie/~jwagner/doc/Wagner_tbev20.pdf
 [PDF 1072 KiB]
 
 If you use this version of the parser please cite the above paper and
